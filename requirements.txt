@@ -1,6 +1,6 @@
 telebot
 requests
-socketio-client
 flask
 gunicorn
-python-dotenv
+python-socketio
+websocket-client
