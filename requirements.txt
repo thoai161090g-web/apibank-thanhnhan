@@ -1,6 +1,4 @@
-telebot
+pyTelegramBotAPI
+Flask
 requests
-flask
 gunicorn
-python-socketio
-websocket-client
