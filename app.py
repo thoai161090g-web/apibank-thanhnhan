@@ -1,36 +1,48 @@
 from flask import Flask, request
 import requests
+import hashlib
+import hmac
 import json
 import logging
 
 app = Flask(__name__)
-
-# Cấu hình logging để xem log trên Render
 logging.basicConfig(level=logging.INFO)
 
-# === THAY THÔNG TIN BOT CỦA BẠN VÀO ĐÂY ===
-BOT_TOKEN = "YOUR_BOT_TOKEN"  # Thay bằng token của bot Telegram
-CHAT_ID = "YOUR_CHAT_ID"      # Thay bằng ID chat cần gửi thông báo
-# ===========================================
+# === THAY THÔNG TIN CỦA BẠN ===
+BOT_TOKEN = "YOUR_BOT_TOKEN"      # Token bot Telegram
+CHAT_ID = "YOUR_CHAT_ID"          # ID chat Telegram
+SECRET_KEY = "YOUR_SECRET_KEY"    # Secret Key vừa sao chép từ ThueAPI
+# ================================
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
     try:
+        # 1. Lấy dữ liệu
         data = request.get_json()
-        app.logger.info(f"Nhận dữ liệu: {data}")
+        signature = request.headers.get('X-Webhook-Signature', '')
         
-        # Lấy thông tin từ ThueAPI gửi sang
+        # 2. Xác thực chữ ký (bảo mật)
+        if SECRET_KEY != "YOUR_SECRET_KEY":
+            payload = request.get_data(as_text=True)
+            expected = hmac.new(
+                SECRET_KEY.encode(),
+                payload.encode(),
+                hashlib.sha256
+            ).hexdigest()
+            
+            if not hmac.compare_digest(expected, signature):
+                app.logger.warning("Chữ ký không hợp lệ!")
+                return "Invalid signature", 401
+        
+        # 3. Xử lý dữ liệu giao dịch
         va = data.get('va', '')
         amount = data.get('amount', 0)
         content = data.get('content', '')
         time = data.get('time', '')
         
-        # Xử lý logic ở đây:
-        # - Lấy mã đơn hàng từ content (nội dung chuyển khoản)
-        # - So khớp với database đơn hàng
-        # - Nếu khớp số tiền -> duyệt đơn
+        app.logger.info(f"Nhận thanh toán: {amount}đ - {content}")
         
-        # Gửi thông báo về Telegram
+        # 4. Gửi thông báo Telegram
         message = f"✅ NHẬN THANH TOÁN\n"
         message += f"💰 Số tiền: {amount:,}đ\n"
         message += f"📝 Mã đơn: {content}\n"
@@ -39,16 +51,20 @@ def webhook():
         
         if BOT_TOKEN != "YOUR_BOT_TOKEN":
             url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-            requests.post(url, json={
-                "chat_id": CHAT_ID,
-                "text": message
-            })
+            requests.post(url, json={"chat_id": CHAT_ID, "text": message})
+        
+        # 5. Logic duyệt đơn hàng ở đây (so khớp với database)
+        # ...
         
         return "OK", 200
         
     except Exception as e:
         app.logger.error(f"Lỗi: {e}")
         return "Error", 500
+
+@app.route('/webhook', methods=['GET'])
+def webhook_get():
+    return "Webhook đang hoạt động! Chỉ chấp nhận POST từ ThueAPI.", 200
 
 @app.route('/')
 def home():
