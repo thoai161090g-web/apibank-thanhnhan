@@ -1,3 +1,6 @@
-flask
+telebot
 requests
+socketio-client
+flask
 gunicorn
+python-dotenv
