@@ -21,7 +21,7 @@ THUEAPI_SECRET = os.getenv(
 # Thông tin tài khoản nhận tiền
 STK = '8887596710'
 TEN_CTK = 'NGUYEN THANH NHAN'
-NGAN_HANG = 'MBBank'  # Nếu dùng ngân hàng khác (VD: Vietcombank, Techcombank...), hãy sửa tên mã ngân hàng tại đây
+NGAN_HANG = 'BIDV'  # Nếu dùng ngân hàng khác (VD: Vietcombank, Techcombank...), hãy sửa tên mã ngân hàng tại đây
 
 bot = telebot.TeleBot(API_TOKEN)
 app = Flask(__name__)
