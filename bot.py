@@ -48,7 +48,7 @@ DATA_COLLECTOR_PASS = "matkhau123"
 BANK_BIN = 'BIDV'
 BANK_ACC = '8887596710'
 BANK_NAME = 'NGUYEN THANH NHAN'
-QR_CODE_URL = 'https://vietqr.app/img?bank=BIDV&acc=96247KBYXG&template=compact&showinfo=true&holder=NGUYEN%20THANH%20NHAN'
+QR_CODE_URL = 'https://vietqr.app/img?bank=BIDV&acc=963869NHANYEU&template=compact&showinfo=true&holder=NGUYEN%20THANH%20NHAN'
 
 # ==========================================
 # BOT INIT
