@@ -24,7 +24,7 @@ logging.getLogger('engineio').setLevel(logging.WARNING)
 logging.getLogger('socketio').setLevel(logging.WARNING)
 logging.getLogger('urllib3').setLevel(logging.WARNING)
 
-BOT_TOKEN = '8296926605:AAH32SNx9cbvcROyZV2ZXcszM3DOU9Wi7ro'
+BOT_TOKEN = '8545966200:AAFWHF2rZppjoMX27bGichmeaRgoqUWCzds'
 ADMIN_ID = 8375848425
 ADMIN_CONTACT = '@nhan161019'
 
