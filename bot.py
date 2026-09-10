@@ -149,7 +149,7 @@ MAX_WARNINGS = 2
 # USER MANAGEMENT
 # ==========================================
 def get_user(user_id):
-    refresh_db()  # ← ĐỌC LẠI FILE TRƯỚC KHI LẤY USER
+    refresh_db()
     user_id = str(user_id)
     if user_id not in db["users"]:
         db["users"][user_id] = {"username": "", "balance": 0, "key_expiry": None, 
@@ -158,7 +158,7 @@ def get_user(user_id):
     return db["users"][user_id]
 
 def update_user(user_id, **kwargs):
-    refresh_db()  # ← ĐỌC LẠI FILE TRƯỚC KHI UPDATE
+    refresh_db()
     user = get_user(user_id)
     user.update(kwargs)
     db["users"][str(user_id)] = user
@@ -301,25 +301,80 @@ def analyze_ai_deep(hash_str):
     return {"result": base_result, "tai_percent": tai_percent, "xiu_percent": xiu_percent, "is_reversed": is_reversed}
 
 # ==========================================
-# XỬ LÝ NẠP TIỀN TỪ WEBHOOK THUEAPI
+# XỬ LÝ NẠP TIỀN TỪ WEBHOOK THUEAPI (CÓ KIỂM TRA SỐ TIỀN)
 # ==========================================
 def process_deposit_from_webhook(user_id, amount, va=""):
-    """Xử lý nạp tiền từ webhook ThueAPI"""
+    """Xử lý nạp tiền từ webhook ThueAPI - CÓ KIỂM TRA SỐ TIỀN ĐƠN NẠP"""
     try:
-        refresh_db()  # ← ĐỌC LẠI FILE MỚI NHẤT
+        refresh_db()
         
         user = get_user(user_id)
         if user is None:
             logger.warning(f"User {user_id} không tồn tại")
             return False
         
+        # ✅ KIỂM TRA ĐƠN NẠP CÓ TỒN TẠI KHÔNG
+        pending = db.get("pending_deposits", {}).get(str(user_id))
+        
+        if pending:
+            expected_amount = pending.get("amount", 0)
+            
+            # Kiểm tra số tiền chuyển có khớp không
+            if amount < expected_amount:
+                logger.warning(f"⚠️ User {user_id} chuyển THIẾU: {amount:,}đ / {expected_amount:,}đ")
+                
+                # Gửi thông báo cho user
+                try:
+                    bot.send_message(
+                        user_id,
+                        f"⚠️ <b>CHUYỂN THIẾU TIỀN!</b>\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"💰 Đơn nạp: <code>{expected_amount:,}đ</code>\n"
+                        f"💳 Thực nhận: <code>{amount:,}đ</code>\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"❗ Vui lòng chuyển đủ số tiền để được duyệt!\n"
+                        f"📞 Liên hệ: {ADMIN_CONTACT}",
+                        parse_mode="HTML"
+                    )
+                except Exception as e:
+                    logger.error(f"Không thể gửi tin cho user {user_id}: {e}")
+                
+                # Gửi thông báo cho admin
+                try:
+                    bot.send_message(
+                        ADMIN_ID,
+                        f"⚠️ <b>USER CHUYỂN THIẾU TIỀN</b>\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"🆔 User ID: <code>{user_id}</code>\n"
+                        f"💰 Đơn nạp: <code>{expected_amount:,}đ</code>\n"
+                        f"💳 Thực nhận: <code>{amount:,}đ</code>\n"
+                        f"📝 Mã GD: <code>VA-{va}</code>",
+                        parse_mode="HTML"
+                    )
+                except Exception as e:
+                    logger.error(f"Không thể gửi tin cho admin: {e}")
+                
+                return False
+            
+            # ✅ Số tiền khớp hoặc nhiều hơn → cộng tiền
+            logger.info(f"✅ User {user_id} chuyển đủ: {amount:,}đ (đơn: {expected_amount:,}đ)")
+        
+        else:
+            # Không có đơn nạp → vẫn cộng tiền (hoặc bạn có thể chặn)
+            logger.info(f"ℹ️ User {user_id} không có đơn nạp, vẫn cộng {amount:,}đ")
+        
+        # Cộng tiền
         new_balance = user["balance"] + amount
         update_user(user_id, balance=new_balance)
         
-        # Đọc lại DB sau khi update để lưu lịch sử
+        # Xóa đơn nạp nếu có
         refresh_db()
+        if str(user_id) in db.get("pending_deposits", {}):
+            del db["pending_deposits"][str(user_id)]
+            save_db()
         
         # Lưu lịch sử giao dịch
+        refresh_db()
         db.setdefault("transaction_history", {}).setdefault(user_id, [])
         db["transaction_history"][user_id].append({
             "type": "deposit",
@@ -998,7 +1053,7 @@ def send_welcome(message):
     
     if not check_user_joined(message.from_user.id):
         msg = (
-            "🔔 <b>YÊU CẦU BẤT BUỘC</b>\n"
+            "🔔 <b>YÊU CẦU BẮT BUỘC</b>\n"
             "Để sử dụng bot, vui lòng tham gia đầy đủ các kênh và nhóm bên dưới.\n"
             "Nhấn nút <b>Xác Nhận Join</b> sau khi đã hoàn tất."
         )
@@ -1127,7 +1182,16 @@ def handle_callbacks(call):
         val = call.data.split("_")[2]
         amount = int(val)
         
-        # Tạo nội dung chuyển khoản
+        # ✅ LƯU ĐƠN NẠP VÀO DATABASE
+        refresh_db()
+        db.setdefault("pending_deposits", {})[str(user_id)] = {
+            "amount": amount,
+            "va": BANK_ACC,
+            "created_at": datetime.now().isoformat(),
+            "status": "pending"
+        }
+        save_db()
+        
         content = f"NAP {user_id}"
         
         msg = f"💎 <b>NẠP TIỀN</b>\n"
@@ -1139,12 +1203,12 @@ def handle_callbacks(call):
         msg += f"📝 <b>Nội dung:</b> <code>{content}</code>\n"
         msg += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         msg += f"✅ Sau khi chuyển khoản, bot sẽ tự động duyệt trong 20-30 giây!\n"
+        msg += f"⚠️ <b>Chuyển ĐÚNG số tiền {amount:,}đ để được duyệt!</b>\n"
         msg += f"📌 Quét mã QR bên dưới để chuyển khoản nhanh:"
         
         bot.send_photo(chat_id, QR_CODE_URL, caption=msg, reply_markup=kb_back_inline())
     
     elif call.data == "nav_history":
-        # Lịch sử giao dịch
         refresh_db()
         user_id_str = str(user_id)
         history = db.get("transaction_history", {}).get(user_id_str, [])
@@ -1155,7 +1219,6 @@ def handle_callbacks(call):
             msg = "📜 <b>LỊCH SỬ GIAO DỊCH</b>\n"
             msg += "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
             
-            # Lấy 20 giao dịch gần nhất
             recent = history[-20:][::-1]
             for trans in recent:
                 trans_type = "💰 Nạp tiền" if trans.get("type") == "deposit" else "💸 Rút tiền"
@@ -1204,10 +1267,9 @@ def handle_callbacks(call):
             bot.edit_message_text("👑 <b>QUẢN TRỊ ADMIN</b>", chat_id=chat_id, message_id=call.message.message_id, reply_markup=kb_admin_inline())
 
 # ==========================================
-# PROCESS CUSTOM DEPOSIT
+# PROCESS CUSTOM DEPOSIT (CÓ LƯU ĐƠN NẠP)
 # ==========================================
 def process_custom_deposit(message):
-    """Xử lý nhập số tiền nạp tùy chỉnh"""
     try:
         amount = int(message.text.replace(",", "").replace(".", ""))
         if amount < 10000:
@@ -1215,7 +1277,16 @@ def process_custom_deposit(message):
         
         user_id = message.from_user.id
         
-        # Tạo nội dung chuyển khoản
+        # ✅ LƯU ĐƠN NẠP VÀO DATABASE
+        refresh_db()
+        db.setdefault("pending_deposits", {})[str(user_id)] = {
+            "amount": amount,
+            "va": BANK_ACC,
+            "created_at": datetime.now().isoformat(),
+            "status": "pending"
+        }
+        save_db()
+        
         content = f"NAP {user_id}"
         
         msg = f"💎 <b>NẠP TIỀN</b>\n"
@@ -1227,6 +1298,7 @@ def process_custom_deposit(message):
         msg += f"📝 <b>Nội dung:</b> <code>{content}</code>\n"
         msg += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         msg += f"✅ Sau khi chuyển khoản, bot sẽ tự động duyệt trong 20-30 giây!\n"
+        msg += f"⚠️ <b>Chuyển ĐÚNG số tiền {amount:,}đ để được duyệt!</b>\n"
         msg += f"📌 Quét mã QR bên dưới để chuyển khoản nhanh:"
         
         bot.send_photo(message.chat.id, QR_CODE_URL, caption=msg, reply_markup=kb_back_inline())
@@ -1260,7 +1332,6 @@ def admin_step_bal(message):
         new_bal = user['balance'] + amt
         update_user(uid, balance=new_bal)
         
-        # Lưu lịch sử giao dịch
         refresh_db()
         db.setdefault("transaction_history", {}).setdefault(uid, [])
         db["transaction_history"][uid].append({
@@ -1420,14 +1491,12 @@ if __name__ == '__main__':
     print("📢 YÊU CẦU THAM GIA KÊNH/NHÓM (BẮT BUỘC)")
     print("==================================================")
     
-    # Xóa webhook cũ để tránh conflict
     try:
         bot.remove_webhook()
         print("✅ Đã xóa webhook cũ")
     except Exception as e:
         print(f"⚠️ Không xóa được webhook: {e}")
     
-    # Chạy polling
     try:
         print("🤖 Bắt đầu polling...")
         bot.infinity_polling(timeout=60, long_polling_timeout=60)
