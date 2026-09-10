@@ -14,6 +14,9 @@ import os
 from datetime import datetime, timedelta
 from functools import wraps
 import re
+import urllib3
+
+urllib3.disable_warnings()
 
 # ==========================================
 # CẤU HÌNH
@@ -43,7 +46,13 @@ DATA_COLLECTOR_USER = "acc_clone_soi_cau"
 DATA_COLLECTOR_PASS = "matkhau123"
 
 # ==========================================
-# QR CODE CỐ ĐỊNH
+# API BETVIP
+# ==========================================
+BETVIP_API_HU = "https://betvip2x.hacksieucap.pro/huddd"
+BETVIP_API_MD5 = "https://betvip2x.hacksieucap.pro/md5dd"
+
+# ==========================================
+# QR CODE
 # ==========================================
 BANK_BIN = 'BIDV'
 BANK_ACC = '963869NHANYEU'
@@ -69,7 +78,7 @@ KEY_PRICES = {
 }
 
 # ==========================================
-# DATABASE - ĐỒNG BỘ GIỮA CÁC PROCESS
+# DATABASE
 # ==========================================
 def load_db():
     default = {"users": {}, "keys": {}, "giftcodes": {}, "pending_deposits": {}, 
@@ -88,7 +97,6 @@ def save_db():
         json.dump(db, f, ensure_ascii=False, indent=4)
 
 def refresh_db():
-    """Đọc lại database từ file để đồng bộ giữa bot.py và webhook.py"""
     global db
     db = load_db()
 
@@ -301,94 +309,58 @@ def analyze_ai_deep(hash_str):
     return {"result": base_result, "tai_percent": tai_percent, "xiu_percent": xiu_percent, "is_reversed": is_reversed}
 
 # ==========================================
-# XỬ LÝ NẠP TIỀN TỪ WEBHOOK THUEAPI (CÓ KIỂM TRA SỐ TIỀN)
+# XỬ LÝ NẠP TIỀN TỪ WEBHOOK
 # ==========================================
 def process_deposit_from_webhook(user_id, amount, va=""):
-    """Xử lý nạp tiền từ webhook ThueAPI - CÓ KIỂM TRA SỐ TIỀN ĐƠN NẠP"""
     try:
         refresh_db()
-        
         user = get_user(user_id)
         if user is None:
             logger.warning(f"User {user_id} không tồn tại")
             return False
         
-        # ✅ KIỂM TRA ĐƠN NẠP CÓ TỒN TẠI KHÔNG
+        # Kiểm tra đơn nạp
         pending = db.get("pending_deposits", {}).get(str(user_id))
-        
         if pending:
             expected_amount = pending.get("amount", 0)
-            
-            # Kiểm tra số tiền chuyển có khớp không
             if amount < expected_amount:
                 logger.warning(f"⚠️ User {user_id} chuyển THIẾU: {amount:,}đ / {expected_amount:,}đ")
-                
-                # Gửi thông báo cho user
                 try:
-                    bot.send_message(
-                        user_id,
+                    bot.send_message(user_id,
                         f"⚠️ <b>CHUYỂN THIẾU TIỀN!</b>\n"
                         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                         f"💰 Đơn nạp: <code>{expected_amount:,}đ</code>\n"
                         f"💳 Thực nhận: <code>{amount:,}đ</code>\n"
                         f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                        f"❗ Vui lòng chuyển đủ số tiền để được duyệt!\n"
+                        f"❗ Vui lòng chuyển đủ số tiền!\n"
                         f"📞 Liên hệ: {ADMIN_CONTACT}",
-                        parse_mode="HTML"
-                    )
-                except Exception as e:
-                    logger.error(f"Không thể gửi tin cho user {user_id}: {e}")
-                
-                # Gửi thông báo cho admin
-                try:
-                    bot.send_message(
-                        ADMIN_ID,
-                        f"⚠️ <b>USER CHUYỂN THIẾU TIỀN</b>\n"
-                        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                        f"🆔 User ID: <code>{user_id}</code>\n"
-                        f"💰 Đơn nạp: <code>{expected_amount:,}đ</code>\n"
-                        f"💳 Thực nhận: <code>{amount:,}đ</code>\n"
-                        f"📝 Mã GD: <code>VA-{va}</code>",
-                        parse_mode="HTML"
-                    )
-                except Exception as e:
-                    logger.error(f"Không thể gửi tin cho admin: {e}")
-                
+                        parse_mode="HTML")
+                except: pass
                 return False
-            
-            # ✅ Số tiền khớp hoặc nhiều hơn → cộng tiền
-            logger.info(f"✅ User {user_id} chuyển đủ: {amount:,}đ (đơn: {expected_amount:,}đ)")
-        
-        else:
-            # Không có đơn nạp → vẫn cộng tiền (hoặc bạn có thể chặn)
-            logger.info(f"ℹ️ User {user_id} không có đơn nạp, vẫn cộng {amount:,}đ")
+            logger.info(f"✅ User {user_id} chuyển đủ: {amount:,}đ")
         
         # Cộng tiền
         new_balance = user["balance"] + amount
         update_user(user_id, balance=new_balance)
         
-        # Xóa đơn nạp nếu có
+        # Xóa đơn nạp
         refresh_db()
         if str(user_id) in db.get("pending_deposits", {}):
             del db["pending_deposits"][str(user_id)]
             save_db()
         
-        # Lưu lịch sử giao dịch
+        # Lưu lịch sử
         refresh_db()
         db.setdefault("transaction_history", {}).setdefault(user_id, [])
         db["transaction_history"][user_id].append({
-            "type": "deposit",
-            "amount": amount,
-            "balance": new_balance,
-            "trans_id": f"VA-{va}",
-            "time": datetime.now().isoformat()
+            "type": "deposit", "amount": amount, "balance": new_balance,
+            "trans_id": f"VA-{va}", "time": datetime.now().isoformat()
         })
         save_db()
         
-        # Gửi thông báo cho user
+        # Gửi thông báo user
         try:
-            bot.send_message(
-                user_id,
+            bot.send_message(user_id,
                 f"🎉 <b>NẠP TIỀN TỰ ĐỘNG THÀNH CÔNG!</b>\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"💰 Số tiền: <code>+{amount:,}đ</code>\n"
@@ -396,30 +368,20 @@ def process_deposit_from_webhook(user_id, amount, va=""):
                 f"📅 Lúc: {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"✅ <b>GIAO DỊCH ĐÃ ĐƯỢC TỰ ĐỘNG DUYỆT!</b>",
-                parse_mode="HTML"
-            )
-        except Exception as e:
-            logger.error(f"Không thể gửi tin cho user {user_id}: {e}")
+                parse_mode="HTML")
+        except: pass
         
-        # Gửi thông báo cho admin
+        # Gửi thông báo admin
         try:
-            bot.send_message(
-                ADMIN_ID,
+            bot.send_message(ADMIN_ID,
                 f"✅ <b>TỰ ĐỘNG DUYỆT NẠP TIỀN</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"🆔 User ID: <code>{user_id}</code>\n"
-                f"💰 Số tiền: <code>+{amount:,}đ</code>\n"
-                f"💳 Số dư mới: <code>{new_balance:,}đ</code>\n"
-                f"📝 Mã GD: <code>VA-{va}</code>\n"
-                f"📅 Lúc: {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}",
-                parse_mode="HTML"
-            )
-        except Exception as e:
-            logger.error(f"Không thể gửi tin cho admin: {e}")
+                f"🆔 User: <code>{user_id}</code>\n"
+                f"💰 +{amount:,}đ | Số dư: {new_balance:,}đ",
+                parse_mode="HTML")
+        except: pass
         
-        logger.info(f"✅ Nạp {amount:,}đ cho user {user_id}, số dư mới: {new_balance:,}đ")
+        logger.info(f"✅ Nạp {amount:,}đ cho user {user_id}")
         return True
-        
     except Exception as e:
         logger.error(f"Lỗi xử lý nạp: {e}")
         return False
@@ -728,6 +690,66 @@ def background_data_collector():
         time.sleep(30)
 
 # ==========================================
+# BETVIP FUNCTIONS
+# ==========================================
+def get_betvip_prediction(api_url):
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36',
+            'Accept': 'application/json'
+        }
+        r = requests.get(api_url, headers=headers, timeout=10, verify=False)
+        if r.status_code == 200:
+            return r.json()
+        return None
+    except Exception as e:
+        logger.error(f"Lỗi API BetVip: {e}")
+        return None
+
+def format_betvip_message(data, game_name):
+    if not data:
+        return f"❌ <b>Không lấy được dữ liệu {game_name}!</b>\nVui lòng thử lại sau."
+    
+    ket_qua = data.get('Ket_qua', 'N/A')
+    phien = data.get('Phien', 'N/A')
+    tong = data.get('Tong', 0)
+    x1 = data.get('Xuc_xac_1', 0)
+    x2 = data.get('Xuc_xac_2', 0)
+    x3 = data.get('Xuc_xac_3', 0)
+    du_doan = data.get('du_doan', 'N/A')
+    phien_dd = data.get('phiendudoan', 'N/A')
+    ty_le = data.get('ty_le_dd', 'N/A')
+    pattern = data.get('pattern', '')
+    chien_thuat = data.get('chien_thuat', '')
+    dang_cau = data.get('dang_cau', '')
+    giai_thich = data.get('giai_thich', '')
+    
+    ket_qua_emoji = "🔵 TÀI" if ket_qua == "Tài" else "🔴 XỈU"
+    du_doan_emoji = "🔵 TÀI" if du_doan == "Tài" else "🔴 XỈU"
+    
+    msg = f"🎲 <b>{game_name} - DỰ ĐOÁN</b>\n"
+    msg += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    msg += f"📌 <b>Phiên hiện tại:</b> <code>#{phien}</code>\n"
+    msg += f"🎯 <b>Kết quả:</b> {ket_qua_emoji}\n"
+    msg += f"🎲 <b>Xúc xắc:</b> {x1} + {x2} + {x3} = <b>{tong}</b>\n\n"
+    msg += f"🔮 <b>DỰ ĐOÁN PHIÊN:</b> <code>#{phien_dd}</code>\n"
+    msg += f"💎 <b>Chốt:</b> {du_doan_emoji}\n"
+    msg += f"📊 <b>Tỉ lệ:</b> <code>{ty_le}</code>\n"
+    if chien_thuat:
+        msg += f"⚔️ <b>Chiến thuật:</b> {chien_thuat}\n"
+    if dang_cau:
+        msg += f"📈 <b>Dạng cầu:</b> {dang_cau}\n"
+    msg += f"\n"
+    if pattern:
+        msg += f"📊 <b>Cầu gần đây:</b>\n<code>{pattern[-40:]}</code>\n\n"
+    if giai_thich:
+        msg += f"💡 <i>{giai_thich}</i>\n\n"
+    msg += f"⏱ {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}\n"
+    msg += get_footer()
+    
+    return msg
+
+# ==========================================
 # INLINE KEYBOARDS
 # ==========================================
 def kb_main_inline(user_id):
@@ -735,6 +757,10 @@ def kb_main_inline(user_id):
     markup.add(
         InlineKeyboardButton("🎮 Bàn Tài Xỉu Thường", callback_data="nav_game"),
         InlineKeyboardButton("🎲 Bàn Tài Xỉu MD5", callback_data="nav_game_md5")
+    )
+    markup.add(
+        InlineKeyboardButton("🎰 BetVip Hũ", callback_data="nav_betvip_hu"),
+        InlineKeyboardButton("🎲 BetVip MD5", callback_data="nav_betvip_md5")
     )
     markup.add(
         InlineKeyboardButton("📊 Thống Kê AI", callback_data="nav_stats"),
@@ -825,9 +851,12 @@ def render_main_text(user_id, name):
     msg += f"💳 Số dư ví: <b>{u_info['balance']:,}đ</b>\n"
     msg += f"🔴 KEY VIP: {status_key}\n"
     msg += f"👥 Tổng người dùng: <b>{len(db['users'])} người</b>\n\n"
+    msg += f"🎰 <b>GAME MỚI: BETVIP HŨ + MD5</b>\n"
     msg += f"🤖 <b>CÁC LỆNH LÊN TOOL:</b>\n"
     msg += f"👉 <code>/logintx tk mk</code> | <code>/loginmd5 tk mk</code>\n"
     msg += f"👉 <code>/autobettx on 10000</code> | <code>/autobetmd5 on 10000</code>\n"
+    msg += f"👉 <code>/betvip</code> - Dự đoán BetVip\n"
+    msg += f"👉 <code>/hu</code> | <code>/md5</code> - Dự đoán nhanh\n"
     msg += f"👉 <code>/stop</code> | <code>/help</code>\n\n"
     msg += f"👇 <b>Chọn chức năng bên dưới:</b>\n"
     msg += get_footer()
@@ -841,19 +870,13 @@ def render_main_text(user_id, name):
 def handle_verify_join(call):
     user_id = call.from_user.id
     chat_id = call.message.chat.id
-    
     refresh_db()
     if str(user_id) not in db.get("joined_users", []):
         db.setdefault("joined_users", []).append(str(user_id))
         save_db()
-    
     bot.edit_message_text(
-        "✅ <b>XÁC NHẬN THÀNH CÔNG!</b>\n"
-        "Chào mừng bạn đến với hệ thống! 🎉\n\n"
-        "📌 LƯU Ý: Vui lòng tham gia kênh/nhóm để nhận thông báo mới nhất.",
-        chat_id=chat_id, 
-        message_id=call.message.message_id
-    )
+        "✅ <b>XÁC NHẬN THÀNH CÔNG!</b>\nChào mừng bạn! 🎉",
+        chat_id=chat_id, message_id=call.message.message_id)
     bot.send_message(chat_id, render_main_text(user_id, call.from_user.first_name),
                     reply_markup=kb_main_inline(user_id))
 
@@ -864,21 +887,16 @@ def handle_login_tx(message):
     parts = message.text.split()
     if len(parts) != 3: 
         return bot.reply_to(message, "👉 Cú pháp: <code>/logintx tài_khoản mật_khẩu</code>", parse_mode="HTML")
-    
     msg_proc = bot.reply_to(message, "🔄 <b>ĐANG KẾT NỐI BÀN THƯỜNG…</b>", parse_mode="HTML")
     result = login_and_get_token(parts[1], parts[2])
-    
     if "_error" in result: 
         return bot.edit_message_text(f"❌ <b>LỖI:</b> {result['_error']}", chat_id=message.chat.id, message_id=msg_proc.message_id, parse_mode="HTML")
-    
     init_user_state(message.chat.id)
     user_states[message.chat.id]["balance"] = result['money']
-    
     bot.edit_message_text(
         f"🎉 <b>ĐĂNG NHẬP BÀN THƯỜNG THÀNH CÔNG</b>\n"
         f"👤 <code>{result['nickname']}</code>\n💰 <code>{result['money']:,}đ</code>", 
-        chat_id=message.chat.id, message_id=msg_proc.message_id, parse_mode="HTML"
-    )
+        chat_id=message.chat.id, message_id=msg_proc.message_id, parse_mode="HTML")
     threading.Thread(target=start_websocket, args=(message.chat.id, result['token']), daemon=True).start()
 
 @bot.message_handler(commands=['loginmd5'])
@@ -888,21 +906,16 @@ def handle_login_md5(message):
     parts = message.text.split()
     if len(parts) != 3: 
         return bot.reply_to(message, "👉 Cú pháp: <code>/loginmd5 tài_khoản mật_khẩu</code>", parse_mode="HTML")
-    
     msg_proc = bot.reply_to(message, "🔄 <b>ĐANG KẾT NỐI BÀN MD5…</b>", parse_mode="HTML")
     result = login_and_get_token(parts[1], parts[2])
-    
     if "_error" in result: 
         return bot.edit_message_text(f"❌ <b>LỖI:</b> {result['_error']}", chat_id=message.chat.id, message_id=msg_proc.message_id, parse_mode="HTML")
-    
     init_user_state_md5(message.chat.id)
     user_states_md5[message.chat.id]["balance"] = result['money']
-    
     bot.edit_message_text(
         f"🎉 <b>ĐĂNG NHẬP BÀN MD5 THÀNH CÔNG</b>\n"
         f"👤 <code>{result['nickname']}</code>\n💰 <code>{result['money']:,}đ</code>", 
-        chat_id=message.chat.id, message_id=msg_proc.message_id, parse_mode="HTML"
-    )
+        chat_id=message.chat.id, message_id=msg_proc.message_id, parse_mode="HTML")
     threading.Thread(target=start_websocket_md5, args=(message.chat.id, result['token']), daemon=True).start()
 
 @bot.message_handler(commands=['autobettx'])
@@ -912,7 +925,6 @@ def handle_autobet_tx(message):
     parts = message.text.split()
     if message.chat.id not in user_states:
         return bot.reply_to(message, "⚠️ Vui lòng /logintx trước!")
-    
     state = user_states[message.chat.id]
     if len(parts) > 1 and parts[1].lower() == "on":
         amount = int(parts[2]) if len(parts) > 2 else 10000
@@ -931,7 +943,6 @@ def handle_autobet_md5(message):
     parts = message.text.split()
     if message.chat.id not in user_states_md5:
         return bot.reply_to(message, "⚠️ Vui lòng /loginmd5 trước!")
-    
     state = user_states_md5[message.chat.id]
     if len(parts) > 1 and parts[1].lower() == "on":
         amount = int(parts[2]) if len(parts) > 2 else 10000
@@ -1031,18 +1042,20 @@ def send_help(message):
     help_text = (
         "🤖 <b>HƯỚNG DẪN SỬ DỤNG</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "🔹 <code>/logintx tk mk</code> - Đăng nhập bàn Thường\n"
-        "🔹 <code>/loginmd5 tk mk</code> - Đăng nhập bàn MD5\n"
-        "🔹 <code>/autobettx on [số_tiền]</code> - Bật Auto Bet TX\n"
-        "🔹 <code>/autobetmd5 on [số_tiền]</code> - Bật Auto Bet MD5\n"
-        "🔹 <code>/x2 on/off</code> - Nhồi X2\n"
-        "🔹 <code>/chotlai [số_tiền]</code> - Chốt lãi\n"
-        "🔹 <code>/stop</code> - Ngắt kết nối\n"
-        "🔹 <code>/taocode [Mã] [Số_tiền]</code> - Tạo Giftcode\n\n"
+        "🎮 <b>TÀI XỈU THƯỜNG:</b>\n"
+        "🔹 <code>/logintx tk mk</code> - Đăng nhập\n"
+        "🔹 <code>/autobettx on [số_tiền]</code> - Bật Auto Bet\n\n"
+        "🎲 <b>TÀI XỈU MD5:</b>\n"
+        "🔹 <code>/loginmd5 tk mk</code> - Đăng nhập\n"
+        "🔹 <code>/autobetmd5 on [số_tiền]</code> - Bật Auto Bet\n\n"
+        "🎰 <b>BETVIP (MỚI):</b>\n"
+        "🔹 <code>/betvip</code> - Dự đoán cả Hũ + MD5\n"
+        "🔹 <code>/hu</code> - Chỉ dự đoán Hũ\n"
+        "🔹 <code>/md5</code> - Chỉ dự đoán MD5\n\n"
         "💳 <b>NẠP TIỀN TỰ ĐỘNG:</b>\n"
-        f"🏦 {BANK_BIN} - {BANK_ACC} - {BANK_NAME}\n"
-        "📝 Nội dung: <code>NAP [ID]</code> (VD: NAP 8375848425)\n"
-        "✅ Bot tự động kiểm tra và duyệt trong 20-30 giây!\n\n"
+        f"🏦 {BANK_BIN} - {BANK_ACC}\n"
+        "📝 Nội dung: <code>NAP [ID]</code>\n"
+        "✅ Bot tự động duyệt trong 20-30 giây!\n\n"
         f"💬 Hỗ trợ: {ADMIN_CONTACT}"
     )
     bot.reply_to(message, help_text, parse_mode="HTML")
@@ -1050,20 +1063,47 @@ def send_help(message):
 @bot.message_handler(commands=['start', 'menu'])
 def send_welcome(message):
     if check_and_block(message): return
-    
     if not check_user_joined(message.from_user.id):
-        msg = (
-            "🔔 <b>YÊU CẦU BẮT BUỘC</b>\n"
-            "Để sử dụng bot, vui lòng tham gia đầy đủ các kênh và nhóm bên dưới.\n"
-            "Nhấn nút <b>Xác Nhận Join</b> sau khi đã hoàn tất."
-        )
+        msg = "🔔 <b>YÊU CẦU BẮT BUỘC</b>\nVui lòng tham gia kênh/nhóm trước!"
         bot.send_message(message.chat.id, msg, reply_markup=kb_verify_join())
         return
-    
     init_user_state(message.chat.id)
     init_user_state_md5(message.chat.id)
     bot.send_message(message.chat.id, render_main_text(message.from_user.id, message.from_user.first_name),
                     reply_markup=kb_main_inline(message.from_user.id))
+
+# ==========================================
+# BETVIP COMMANDS
+# ==========================================
+@bot.message_handler(commands=['betvip'])
+@require_joined
+@require_vip
+def handle_betvip(message):
+    msg_proc = bot.reply_to(message, "🔄 <b>Đang phân tích cầu BetVip...</b>", parse_mode="HTML")
+    data_hu = get_betvip_prediction(BETVIP_API_HU)
+    data_md5 = get_betvip_prediction(BETVIP_API_MD5)
+    msg = format_betvip_message(data_hu, "🎰 BÀN HŨ") + "\n\n"
+    msg += format_betvip_message(data_md5, "🎲 BÀN MD5")
+    try:
+        bot.edit_message_text(msg, chat_id=message.chat.id, message_id=msg_proc.message_id, parse_mode="HTML")
+    except:
+        bot.send_message(message.chat.id, msg, parse_mode="HTML")
+
+@bot.message_handler(commands=['hu'])
+@require_joined
+@require_vip
+def handle_hu(message):
+    data = get_betvip_prediction(BETVIP_API_HU)
+    msg = format_betvip_message(data, "🎰 BÀN HŨ")
+    bot.reply_to(message, msg, parse_mode="HTML")
+
+@bot.message_handler(commands=['md5'])
+@require_joined
+@require_vip
+def handle_md5_betvip(message):
+    data = get_betvip_prediction(BETVIP_API_MD5)
+    msg = format_betvip_message(data, "🎲 BÀN MD5")
+    bot.reply_to(message, msg, parse_mode="HTML")
 
 # ==========================================
 # CALLBACK HANDLERS
@@ -1071,11 +1111,9 @@ def send_welcome(message):
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callbacks(call):
     if check_and_block(call): return
-    
     if call.data != "verify_join" and not check_user_joined(call.from_user.id):
         bot.answer_callback_query(call.id, "❌ Vui lòng tham gia kênh/nhóm trước!", show_alert=True)
         return
-    
     bot.answer_callback_query(call.id)
     chat_id = call.message.chat.id
     user_id = call.from_user.id
@@ -1088,8 +1126,7 @@ def handle_callbacks(call):
         if call.data == "adm_reset_algo":
             db["history_md5"] = []
             db["is_reversed_mode"] = False
-            with history_lock:
-                GLOBAL_HISTORY.clear()
+            with history_lock: GLOBAL_HISTORY.clear()
             save_db()
             bot.edit_message_text("🔄 <b>ĐÃ RESET THUẬT TOÁN!</b>", chat_id=chat_id, message_id=call.message.message_id, reply_markup=kb_admin_inline())
         elif call.data == "adm_create_key":
@@ -1125,6 +1162,14 @@ def handle_callbacks(call):
     elif call.data == "nav_game_md5":
         bot.edit_message_text("🎲 <b>BÀN TÀI XỈU MD5</b>\n🔹 /loginmd5 tk mk\n🔹 Gửi MD5 (32 ký tự) để soi cầu", 
                             chat_id=chat_id, message_id=call.message.message_id, reply_markup=kb_back_inline())
+    elif call.data == "nav_betvip_hu":
+        data = get_betvip_prediction(BETVIP_API_HU)
+        msg = format_betvip_message(data, "🎰 BÀN HŨ")
+        bot.edit_message_text(msg, chat_id=chat_id, message_id=call.message.message_id, reply_markup=kb_back_inline())
+    elif call.data == "nav_betvip_md5":
+        data = get_betvip_prediction(BETVIP_API_MD5)
+        msg = format_betvip_message(data, "🎲 BÀN MD5")
+        bot.edit_message_text(msg, chat_id=chat_id, message_id=call.message.message_id, reply_markup=kb_back_inline())
     elif call.data == "nav_profile":
         refresh_db()
         u_info = get_user(user_id)
@@ -1132,16 +1177,9 @@ def handle_callbacks(call):
         msg = f"💼 <b>HỒ SƠ</b>\n🆔 <code>{user_id}</code>\n💎 <b>{u_info['balance']:,}đ</b>\n⏳ Hạn Key: {exp_str}\n" + get_footer()
         bot.edit_message_text(msg, chat_id=chat_id, message_id=call.message.message_id, reply_markup=kb_back_inline())
     elif call.data == "nav_buy_key":
-        key_info_text = (
-            "🔥 <b>BẢNG GIÁ KEY VIP MỚI</b>\n\n"
-            "⚡ 1 Ngày: 40.000đ\n"
-            "🔥 3 Ngày: 90.000đ\n"
-            "🌟 1 Tuần: 130.000đ\n"
-            "💎 1 Tháng: 170.000đ\n"
-            "👑 1 Năm: 250.000đ\n"
-            "🏆 Vĩnh Viễn: 300.000đ\n\n"
-            "👇 Chọn gói:"
-        )
+        key_info_text = ("🔥 <b>BẢNG GIÁ KEY VIP MỚI</b>\n\n"
+            "⚡ 1 Ngày: 40.000đ\n🔥 3 Ngày: 90.000đ\n🌟 1 Tuần: 130.000đ\n"
+            "💎 1 Tháng: 170.000đ\n👑 1 Năm: 250.000đ\n🏆 Vĩnh Viễn: 300.000đ\n\n👇 Chọn gói:")
         bot.edit_message_text(key_info_text, chat_id=chat_id, message_id=call.message.message_id, reply_markup=kb_buy_key_inline())
     elif call.data.startswith("buy_pkg_"):
         days = int(call.data.split("_")[2])
@@ -1167,75 +1205,50 @@ def handle_callbacks(call):
             f"🏦 <b>Ngân hàng:</b> {BANK_BIN}\n"
             f"📍 <b>Số TK:</b> <code>{BANK_ACC}</code>\n"
             f"👤 <b>Chủ TK:</b> {BANK_NAME}\n\n"
-            "📌 <b>LƯU Ý:</b> Bot sẽ tự động kiểm tra và duyệt nạp tiền!\n"
-            "💡 Gửi chuyển khoản với nội dung: <code>NAP [ID]</code>\n"
-            "Ví dụ: <code>NAP 8375848425</code>\n\n"
-            "⏱ Bot kiểm tra mỗi 20 giây, tự động cộng tiền!\n"
-            "👇 Chọn hạn mức nạp bên dưới hoặc chuyển khoản trực tiếp:",
-            chat_id=chat_id, message_id=call.message.message_id, reply_markup=kb_deposit_inline()
-        )
+            "📌 Bot sẽ tự động kiểm tra và duyệt nạp tiền!\n"
+            "💡 Nội dung: <code>NAP [ID]</code>\n\n"
+            "👇 Chọn hạn mức nạp bên dưới:",
+            chat_id=chat_id, message_id=call.message.message_id, reply_markup=kb_deposit_inline())
     elif call.data == "dep_amt_custom":
-        sent = bot.send_message(chat_id, "✍️ <b>Nhập số tiền bạn muốn nạp (VNĐ):</b>\n"
-                                  "Ví dụ: <code>150000</code>")
+        sent = bot.send_message(chat_id, "✍️ <b>Nhập số tiền bạn muốn nạp (VNĐ):</b>")
         bot.register_next_step_handler(sent, process_custom_deposit)
     elif call.data.startswith("dep_amt_"):
         val = call.data.split("_")[2]
         amount = int(val)
-        
-        # ✅ LƯU ĐƠN NẠP VÀO DATABASE
         refresh_db()
         db.setdefault("pending_deposits", {})[str(user_id)] = {
-            "amount": amount,
-            "va": BANK_ACC,
-            "created_at": datetime.now().isoformat(),
-            "status": "pending"
+            "amount": amount, "va": BANK_ACC,
+            "created_at": datetime.now().isoformat(), "status": "pending"
         }
         save_db()
-        
         content = f"NAP {user_id}"
-        
-        msg = f"💎 <b>NẠP TIỀN</b>\n"
-        msg += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        msg += f"🏦 <b>Ngân hàng:</b> {BANK_BIN}\n"
-        msg += f"📍 <b>Số TK:</b> <code>{BANK_ACC}</code>\n"
-        msg += f"👤 <b>Chủ TK:</b> {BANK_NAME}\n"
-        msg += f"💰 <b>Số tiền:</b> <code>{amount:,}đ</code>\n"
-        msg += f"📝 <b>Nội dung:</b> <code>{content}</code>\n"
-        msg += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        msg += f"✅ Sau khi chuyển khoản, bot sẽ tự động duyệt trong 20-30 giây!\n"
-        msg += f"⚠️ <b>Chuyển ĐÚNG số tiền {amount:,}đ để được duyệt!</b>\n"
-        msg += f"📌 Quét mã QR bên dưới để chuyển khoản nhanh:"
-        
+        msg = (f"💎 <b>NẠP TIỀN</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🏦 <b>Ngân hàng:</b> {BANK_BIN}\n"
+            f"📍 <b>Số TK:</b> <code>{BANK_ACC}</code>\n"
+            f"👤 <b>Chủ TK:</b> {BANK_NAME}\n"
+            f"💰 <b>Số tiền:</b> <code>{amount:,}đ</code>\n"
+            f"📝 <b>Nội dung:</b> <code>{content}</code>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"✅ Bot tự động duyệt trong 20-30 giây!\n"
+            f"⚠️ <b>Chuyển ĐÚNG {amount:,}đ!</b>\n"
+            f"📌 Quét QR:")
         bot.send_photo(chat_id, QR_CODE_URL, caption=msg, reply_markup=kb_back_inline())
-    
     elif call.data == "nav_history":
         refresh_db()
-        user_id_str = str(user_id)
-        history = db.get("transaction_history", {}).get(user_id_str, [])
-        
+        history = db.get("transaction_history", {}).get(str(user_id), [])
         if not history:
             msg = "📭 <b>Bạn chưa có giao dịch nào!</b>"
         else:
-            msg = "📜 <b>LỊCH SỬ GIAO DỊCH</b>\n"
-            msg += "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            
-            recent = history[-20:][::-1]
-            for trans in recent:
+            msg = "📜 <b>LỊCH SỬ GIAO DỊCH</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            for trans in history[-20:][::-1]:
                 trans_type = "💰 Nạp tiền" if trans.get("type") == "deposit" else "💸 Rút tiền"
                 amount = trans.get("amount", 0)
                 balance = trans.get("balance", 0)
                 time_str = datetime.fromisoformat(trans.get("time")).strftime("%d/%m/%Y %H:%M")
-                
                 sign = "+" if trans.get("type") == "deposit" else "-"
-                msg += f"🕐 <b>{time_str}</b>\n"
-                msg += f"📌 {trans_type}: <code>{sign}{amount:,}đ</code>\n"
-                msg += f"💳 Số dư: <code>{balance:,}đ</code>\n"
-                msg += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            
-            msg += f"\n📊 <b>Tổng số giao dịch:</b> {len(history)}"
-        
+                msg += f"🕐 {time_str}\n📌 {trans_type}: <code>{sign}{amount:,}đ</code>\n💳 Số dư: <code>{balance:,}đ</code>\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            msg += f"\n📊 <b>Tổng:</b> {len(history)} giao dịch"
         bot.edit_message_text(msg, chat_id=chat_id, message_id=call.message.message_id, reply_markup=kb_back_inline())
-    
     elif call.data == "nav_stats":
         history = db.get("history_md5", [])
         if not history:
@@ -1267,44 +1280,34 @@ def handle_callbacks(call):
             bot.edit_message_text("👑 <b>QUẢN TRỊ ADMIN</b>", chat_id=chat_id, message_id=call.message.message_id, reply_markup=kb_admin_inline())
 
 # ==========================================
-# PROCESS CUSTOM DEPOSIT (CÓ LƯU ĐƠN NẠP)
+# PROCESS CUSTOM DEPOSIT
 # ==========================================
 def process_custom_deposit(message):
     try:
         amount = int(message.text.replace(",", "").replace(".", ""))
         if amount < 10000:
-            return bot.send_message(message.chat.id, "❌ Số tiền nạp tối thiểu là <b>10.000đ</b>!", parse_mode="HTML")
-        
+            return bot.send_message(message.chat.id, "❌ Số tiền nạp tối thiểu <b>10.000đ</b>!", parse_mode="HTML")
         user_id = message.from_user.id
-        
-        # ✅ LƯU ĐƠN NẠP VÀO DATABASE
         refresh_db()
         db.setdefault("pending_deposits", {})[str(user_id)] = {
-            "amount": amount,
-            "va": BANK_ACC,
-            "created_at": datetime.now().isoformat(),
-            "status": "pending"
+            "amount": amount, "va": BANK_ACC,
+            "created_at": datetime.now().isoformat(), "status": "pending"
         }
         save_db()
-        
         content = f"NAP {user_id}"
-        
-        msg = f"💎 <b>NẠP TIỀN</b>\n"
-        msg += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        msg += f"🏦 <b>Ngân hàng:</b> {BANK_BIN}\n"
-        msg += f"📍 <b>Số TK:</b> <code>{BANK_ACC}</code>\n"
-        msg += f"👤 <b>Chủ TK:</b> {BANK_NAME}\n"
-        msg += f"💰 <b>Số tiền:</b> <code>{amount:,}đ</code>\n"
-        msg += f"📝 <b>Nội dung:</b> <code>{content}</code>\n"
-        msg += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        msg += f"✅ Sau khi chuyển khoản, bot sẽ tự động duyệt trong 20-30 giây!\n"
-        msg += f"⚠️ <b>Chuyển ĐÚNG số tiền {amount:,}đ để được duyệt!</b>\n"
-        msg += f"📌 Quét mã QR bên dưới để chuyển khoản nhanh:"
-        
+        msg = (f"💎 <b>NẠP TIỀN</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🏦 <b>Ngân hàng:</b> {BANK_BIN}\n"
+            f"📍 <b>Số TK:</b> <code>{BANK_ACC}</code>\n"
+            f"👤 <b>Chủ TK:</b> {BANK_NAME}\n"
+            f"💰 <b>Số tiền:</b> <code>{amount:,}đ</code>\n"
+            f"📝 <b>Nội dung:</b> <code>{content}</code>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"✅ Bot tự động duyệt trong 20-30 giây!\n"
+            f"⚠️ <b>Chuyển ĐÚNG {amount:,}đ!</b>\n"
+            f"📌 Quét QR:")
         bot.send_photo(message.chat.id, QR_CODE_URL, caption=msg, reply_markup=kb_back_inline())
-        
     except ValueError:
-        bot.send_message(message.chat.id, "❌ Vui lòng nhập số tiền hợp lệ!\nVí dụ: <code>150000</code>", parse_mode="HTML")
+        bot.send_message(message.chat.id, "❌ Vui lòng nhập số tiền hợp lệ!", parse_mode="HTML")
 
 # ==========================================
 # ADMIN STEP FUNCTIONS
@@ -1331,18 +1334,15 @@ def admin_step_bal(message):
         user = get_user(uid)
         new_bal = user['balance'] + amt
         update_user(uid, balance=new_bal)
-        
         refresh_db()
         db.setdefault("transaction_history", {}).setdefault(uid, [])
         db["transaction_history"][uid].append({
             "type": "admin_deposit" if amt > 0 else "admin_withdraw",
-            "amount": amt,
-            "balance": new_bal,
+            "amount": amt, "balance": new_bal,
             "admin_id": str(message.from_user.id),
             "time": datetime.now().isoformat()
         })
         save_db()
-        
         bot.send_message(message.chat.id, f"✅ ID <code>{uid}</code> → <b>{new_bal:,}đ</b>", reply_markup=kb_admin_inline())
     except:
         bot.send_message(message.chat.id, "❌ Sai cú pháp!", reply_markup=kb_admin_inline())
@@ -1355,7 +1355,7 @@ def admin_step_create_giftcode(message):
         refresh_db()
         db.setdefault("giftcodes", {})[code] = {"value": val, "usages": usages, "used_by": []}
         save_db()
-        bot.send_message(message.chat.id, f"🎁 <b>TẠO GIFTCODE:</b> <code>{code}</code>\n💰 {val:,}đ | 🔢 {usages} lượt", reply_markup=kb_admin_inline())
+        bot.send_message(message.chat.id, f"🎁 <b>GIFTCODE:</b> <code>{code}</code>\n💰 {val:,}đ | 🔢 {usages} lượt", reply_markup=kb_admin_inline())
     except:
         bot.send_message(message.chat.id, "❌ Sai cú pháp!", reply_markup=kb_admin_inline())
 
@@ -1399,10 +1399,7 @@ def admin_step_view_user(message):
     refresh_db()
     if uid in db.get("users", {}):
         u = db["users"][uid]
-        msg = f"🔍 <b>HỒ SƠ #{uid}</b>\n"
-        msg += f"💳 <b>{u.get('balance', 0):,}đ</b>\n"
-        msg += f"🛡 {'🔴 Bị khóa' if u.get('is_blocked') else '🟢 Hoạt động'}\n"
-        msg += f"⏳ Hạn Key: {u.get('key_expiry', 'Chưa có')}"
+        msg = f"🔍 <b>HỒ SƠ #{uid}</b>\n💳 <b>{u.get('balance', 0):,}đ</b>\n🛡 {'🔴 Bị khóa' if u.get('is_blocked') else '🟢 Hoạt động'}\n⏳ Hạn Key: {u.get('key_expiry', 'Chưa có')}"
         bot.send_message(message.chat.id, msg, reply_markup=kb_admin_inline())
     else:
         bot.send_message(message.chat.id, f"❌ Không tìm thấy ID", reply_markup=kb_admin_inline())
@@ -1458,20 +1455,17 @@ def process_input_feedback(message):
     bot.send_message(message.chat.id, "✅ Cảm ơn đóng góp!", reply_markup=kb_main_inline(message.chat.id))
 
 # ==========================================
-# MD5 HANDLER
+# MD5 HANDLER (SOI CẦU MD5)
 # ==========================================
 @bot.message_handler(func=lambda msg: len(msg.text.strip()) == 32 and all(c in string.hexdigits for c in msg.text.strip()))
 def handle_md5_code(message):
     if check_and_block(message): return
-    
     if not check_user_joined(message.from_user.id):
-        msg = "🔔 <b>YÊU CẦU BẤT BUỘC</b>\nVui lòng tham gia kênh/nhóm trước khi sử dụng!"
+        msg = "🔔 <b>YÊU CẦU BẮT BUỘC</b>\nVui lòng tham gia kênh/nhóm trước!"
         bot.send_message(message.chat.id, msg, reply_markup=kb_verify_join())
         return
-    
     if not is_vip(message.chat.id):
         return bot.reply_to(message, "⛔ <b>CẦN KEY VIP!</b>", parse_mode="HTML")
-    
     md5_code = message.text.strip()
     res = analyze_ai_deep(md5_code)
     out = f"TÀI: {res['tai_percent']}% | XỈU: {res['xiu_percent']}%\n🔊 Kết quả: <b>{res['result']}</b>"
@@ -1480,23 +1474,32 @@ def handle_md5_code(message):
     bot.reply_to(message, out, parse_mode="HTML")
 
 # ==========================================
-# KHỞI CHẠY (CHO BOT.PY)
+# KHỞI CHẠY
 # ==========================================
 if __name__ == '__main__':
     print("==================================================")
     print("🤖 THÀNH NHÂN ADM @nhan161019 BOT IS ONLINE!")
     print("🎯 BÀN TÀI XỈU THƯỜNG + MD5")
+    print("🎰 BETVIP HŨ + MD5 (NEW!)")
     print("💳 TỰ ĐỘNG NẠP TIỀN QUA WEBHOOK THUEAPI")
-    print("📜 LỊCH SỬ GIAO DỊCH")
-    print("📢 YÊU CẦU THAM GIA KÊNH/NHÓM (BẮT BUỘC)")
     print("==================================================")
-    
     try:
         bot.remove_webhook()
         print("✅ Đã xóa webhook cũ")
     except Exception as e:
         print(f"⚠️ Không xóa được webhook: {e}")
-    
+    try:
+        bot.set_my_commands([
+            BotCommand("start", "Bắt Đầu"),
+            BotCommand("help", "Hướng Dẫn"),
+            BotCommand("logintx", "ĐĂNG NHẬP BÀN THƯỜNG"),
+            BotCommand("loginmd5", "ĐĂNG NHẬP BÀN MD5"),
+            BotCommand("betvip", "DỰ ĐOÁN BETVIP"),
+            BotCommand("hu", "DỰ ĐOÁN HŨ"),
+            BotCommand("md5", "DỰ ĐOÁN MD5")
+        ])
+    except: pass
+    threading.Thread(target=background_data_collector, daemon=True).start()
     try:
         print("🤖 Bắt đầu polling...")
         bot.infinity_polling(timeout=60, long_polling_timeout=60)
