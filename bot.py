@@ -14,8 +14,6 @@ import os
 from datetime import datetime, timedelta
 from functools import wraps
 import re
-from flask import Flask, request
-import hmac
 
 # ==========================================
 # CẤU HÌNH
@@ -43,11 +41,6 @@ CHANNEL_LINK = 'https://t.me/thongbaotoolgamevip'
 
 DATA_COLLECTOR_USER = "acc_clone_soi_cau"
 DATA_COLLECTOR_PASS = "matkhau123"
-
-# ==========================================
-# CẤU HÌNH WEBHOOK THUEAPI
-# ==========================================
-THUEAPI_SECRET_KEY = "LqYHCWAmHmFaaRxJKx4HPfvi2dE7CMJa"
 
 # ==========================================
 # QR CODE CỐ ĐỊNH
@@ -299,10 +292,10 @@ def analyze_ai_deep(hash_str):
     return {"result": base_result, "tai_percent": tai_percent, "xiu_percent": xiu_percent, "is_reversed": is_reversed}
 
 # ==========================================
-# XỬ LÝ NẠP TIỀN TỪ WEBHOOK THUEAPI
+# XỬ LÝ NẠP TIỀN TỪ WEBHOOK THUEAPI (GỌI TỪ FILE webhook.py)
 # ==========================================
 def process_deposit_from_webhook(user_id, amount, va=""):
-    """Xử lý nạp tiền từ webhook ThueAPI"""
+    """Xử lý nạp tiền từ webhook ThueAPI - HÀM NÀY ĐƯỢC GỌI TỪ WEBHOOK.PY"""
     try:
         user = get_user(user_id)
         if user is None:
@@ -361,62 +354,6 @@ def process_deposit_from_webhook(user_id, amount, va=""):
     except Exception as e:
         logger.error(f"Lỗi xử lý nạp: {e}")
         return False
-
-# ==========================================
-# FLASK WEBHOOK - NHẬN DỮ LIỆU TỪ THUEAPI
-# ==========================================
-flask_app = Flask(__name__)
-
-@flask_app.route('/webhook', methods=['POST'])
-def thueapi_webhook():
-    try:
-        data = request.get_json()
-        signature = request.headers.get('X-Webhook-Signature', '')
-        
-        # Xác thực chữ ký
-        if THUEAPI_SECRET_KEY:
-            payload = request.get_data(as_text=True)
-            expected = hmac.new(
-                THUEAPI_SECRET_KEY.encode(),
-                payload.encode(),
-                hashlib.sha256
-            ).hexdigest()
-            
-            if not hmac.compare_digest(expected, signature):
-                logger.warning("Chữ ký không hợp lệ!")
-                return "Invalid signature", 401
-        
-        # Lấy thông tin giao dịch
-        va = data.get('va', '')
-        amount = data.get('amount', 0)
-        content = data.get('content', '').upper()
-        time_str = data.get('time', '')
-        
-        logger.info(f"Nhận webhook: VA={va}, Amount={amount}, Content={content}")
-        
-        # Xử lý nội dung chuyển khoản: NAP [ID]
-        if 'NAP' in content:
-            match = re.search(r'NAP\s*(\d+)', content)
-            if match:
-                user_id = match.group(1)
-                process_deposit_from_webhook(user_id, amount, va)
-            else:
-                logger.warning(f"Nội dung NAP không có ID: {content}")
-        else:
-            logger.info(f"Bỏ qua giao dịch không có NAP: {content}")
-        
-        return "OK", 200
-        
-    except Exception as e:
-        logger.error(f"Lỗi webhook: {e}")
-        return "Error", 500
-
-@flask_app.route('/')
-def home():
-    return "Webhook server đang chạy!", 200
-
-def run_flask():
-    flask_app.run(host='0.0.0.0', port=5000)
 
 # ==========================================
 # GAME FUNCTIONS
@@ -1440,7 +1377,7 @@ def handle_md5_code(message):
     bot.reply_to(message, out, parse_mode="HTML")
 
 # ==========================================
-# KHỞI CHẠY
+# KHỞI CHẠY (CHO BOT.PY)
 # ==========================================
 if __name__ == '__main__':
     print("==================================================")
@@ -1451,19 +1388,16 @@ if __name__ == '__main__':
     print("📢 YÊU CẦU THAM GIA KÊNH/NHÓM (BẮT BUỘC)")
     print("==================================================")
     
-    # Khởi chạy Flask webhook (lắng nghe từ ThueAPI)
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-    print("🌐 Đã khởi động Flask webhook (cổng 5000) - Nhận dữ liệu từ ThueAPI")
-    
+    # Xóa webhook cũ để tránh conflict
     try:
-        bot.set_my_commands([
-            BotCommand("start", "Bắt Đầu"),
-            BotCommand("help", "Hướng Dẫn"),
-            BotCommand("logintx", "ĐĂNG NHẬP BÀN THƯỜNG"),
-            BotCommand("loginmd5", "ĐĂNG NHẬP BÀN MD5")
-        ])
-    except: pass
-
-    threading.Thread(target=background_data_collector, daemon=True).start()
-    bot.infinity_polling()
+        bot.remove_webhook()
+        print("✅ Đã xóa webhook cũ")
+    except Exception as e:
+        print(f"⚠️ Không xóa được webhook: {e}")
+    
+    # Chạy polling
+    try:
+        print("🤖 Bắt đầu polling...")
+        bot.infinity_polling(timeout=60, long_polling_timeout=60)
+    except Exception as e:
+        print(f"❌ Lỗi polling: {e}")
