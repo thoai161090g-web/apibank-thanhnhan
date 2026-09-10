@@ -46,7 +46,7 @@ DATA_COLLECTOR_PASS = "matkhau123"
 # QR CODE CỐ ĐỊNH
 # ==========================================
 BANK_BIN = 'BIDV'
-BANK_ACC = '8887596710'
+BANK_ACC = '963869NHANYEU'
 BANK_NAME = 'NGUYEN THANH NHAN'
 QR_CODE_URL = 'https://vietqr.app/img?bank=BIDV&acc=963869NHANYEU&template=compact&showinfo=true&holder=NGUYEN%20THANH%20NHAN'
 
@@ -69,7 +69,7 @@ KEY_PRICES = {
 }
 
 # ==========================================
-# DATABASE
+# DATABASE - ĐỒNG BỘ GIỮA CÁC PROCESS
 # ==========================================
 def load_db():
     default = {"users": {}, "keys": {}, "giftcodes": {}, "pending_deposits": {}, 
@@ -86,6 +86,11 @@ def load_db():
 def save_db(): 
     with open(DB_FILE, 'w', encoding='utf-8') as f: 
         json.dump(db, f, ensure_ascii=False, indent=4)
+
+def refresh_db():
+    """Đọc lại database từ file để đồng bộ giữa bot.py và webhook.py"""
+    global db
+    db = load_db()
 
 db = load_db()
 
@@ -105,7 +110,7 @@ def require_joined(func):
         user_id = message.from_user.id
         if not check_user_joined(user_id):
             msg = (
-                "🔔 <b>YÊU CẦU BẤT BUỘC</b>\n"
+                "🔔 <b>YÊU CẦU BẮT BUỘC</b>\n"
                 "Để sử dụng bot, vui lòng tham gia đầy đủ các kênh và nhóm bên dưới.\n"
                 "Nhấn nút <b>Xác Nhận Join</b> sau khi đã hoàn tất."
             )
@@ -144,6 +149,7 @@ MAX_WARNINGS = 2
 # USER MANAGEMENT
 # ==========================================
 def get_user(user_id):
+    refresh_db()  # ← ĐỌC LẠI FILE TRƯỚC KHI LẤY USER
     user_id = str(user_id)
     if user_id not in db["users"]:
         db["users"][user_id] = {"username": "", "balance": 0, "key_expiry": None, 
@@ -152,6 +158,7 @@ def get_user(user_id):
     return db["users"][user_id]
 
 def update_user(user_id, **kwargs):
+    refresh_db()  # ← ĐỌC LẠI FILE TRƯỚC KHI UPDATE
     user = get_user(user_id)
     user.update(kwargs)
     db["users"][str(user_id)] = user
@@ -160,6 +167,7 @@ def update_user(user_id, **kwargs):
 def check_active_key(user_id):
     if AUTO_VIP_ENABLED or str(user_id) == str(ADMIN_ID):
         return True
+    refresh_db()
     user = get_user(user_id)
     if not user.get("key_expiry"):
         return False
@@ -180,6 +188,7 @@ def get_footer():
 
 def is_user_blocked(user_id):
     if str(user_id) == str(ADMIN_ID): return False
+    refresh_db()
     return get_user(user_id).get("is_blocked", False)
 
 def check_anti_spam(user_id, chat_id):
@@ -292,11 +301,13 @@ def analyze_ai_deep(hash_str):
     return {"result": base_result, "tai_percent": tai_percent, "xiu_percent": xiu_percent, "is_reversed": is_reversed}
 
 # ==========================================
-# XỬ LÝ NẠP TIỀN TỪ WEBHOOK THUEAPI (GỌI TỪ FILE webhook.py)
+# XỬ LÝ NẠP TIỀN TỪ WEBHOOK THUEAPI
 # ==========================================
 def process_deposit_from_webhook(user_id, amount, va=""):
-    """Xử lý nạp tiền từ webhook ThueAPI - HÀM NÀY ĐƯỢC GỌI TỪ WEBHOOK.PY"""
+    """Xử lý nạp tiền từ webhook ThueAPI"""
     try:
+        refresh_db()  # ← ĐỌC LẠI FILE MỚI NHẤT
+        
         user = get_user(user_id)
         if user is None:
             logger.warning(f"User {user_id} không tồn tại")
@@ -304,6 +315,9 @@ def process_deposit_from_webhook(user_id, amount, va=""):
         
         new_balance = user["balance"] + amount
         update_user(user_id, balance=new_balance)
+        
+        # Đọc lại DB sau khi update để lưu lịch sử
+        refresh_db()
         
         # Lưu lịch sử giao dịch
         db.setdefault("transaction_history", {}).setdefault(user_id, [])
@@ -348,7 +362,7 @@ def process_deposit_from_webhook(user_id, amount, va=""):
         except Exception as e:
             logger.error(f"Không thể gửi tin cho admin: {e}")
         
-        logger.info(f"✅ Nạp {amount:,}đ cho user {user_id}")
+        logger.info(f"✅ Nạp {amount:,}đ cho user {user_id}, số dư mới: {new_balance:,}đ")
         return True
         
     except Exception as e:
@@ -738,6 +752,7 @@ def kb_admin_inline():
     return markup
 
 def render_main_text(user_id, name):
+    refresh_db()
     u_info = get_user(user_id)
     status_key = "🔴 Chưa kích hoạt"
     if check_active_key(user_id):
@@ -772,6 +787,7 @@ def handle_verify_join(call):
     user_id = call.from_user.id
     chat_id = call.message.chat.id
     
+    refresh_db()
     if str(user_id) not in db.get("joined_users", []):
         db.setdefault("joined_users", []).append(str(user_id))
         save_db()
@@ -1055,6 +1071,7 @@ def handle_callbacks(call):
         bot.edit_message_text("🎲 <b>BÀN TÀI XỈU MD5</b>\n🔹 /loginmd5 tk mk\n🔹 Gửi MD5 (32 ký tự) để soi cầu", 
                             chat_id=chat_id, message_id=call.message.message_id, reply_markup=kb_back_inline())
     elif call.data == "nav_profile":
+        refresh_db()
         u_info = get_user(user_id)
         exp_str = u_info.get("key_expiry", "N/A")
         msg = f"💼 <b>HỒ SƠ</b>\n🆔 <code>{user_id}</code>\n💎 <b>{u_info['balance']:,}đ</b>\n⏳ Hạn Key: {exp_str}\n" + get_footer()
@@ -1074,6 +1091,7 @@ def handle_callbacks(call):
     elif call.data.startswith("buy_pkg_"):
         days = int(call.data.split("_")[2])
         price = KEY_PRICES.get(days, 0)
+        refresh_db()
         u_info = get_user(user_id)
         if u_info["balance"] >= price:
             update_user(user_id, balance=u_info["balance"] - price)
@@ -1127,6 +1145,7 @@ def handle_callbacks(call):
     
     elif call.data == "nav_history":
         # Lịch sử giao dịch
+        refresh_db()
         user_id_str = str(user_id)
         history = db.get("transaction_history", {}).get(user_id_str, [])
         
@@ -1223,6 +1242,7 @@ def admin_step_key(message):
     try:
         days = int(message.text.strip())
         key_code = "VIP-" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
+        refresh_db()
         db.setdefault("keys", {})[key_code] = days
         save_db()
         label = "Vĩnh Viễn" if days >= 9999 else f"{days} ngày"
@@ -1235,11 +1255,13 @@ def admin_step_bal(message):
     try:
         parts = message.text.strip().split()
         uid, amt = parts[0], int(parts[1])
+        refresh_db()
         user = get_user(uid)
         new_bal = user['balance'] + amt
         update_user(uid, balance=new_bal)
         
         # Lưu lịch sử giao dịch
+        refresh_db()
         db.setdefault("transaction_history", {}).setdefault(uid, [])
         db["transaction_history"][uid].append({
             "type": "admin_deposit" if amt > 0 else "admin_withdraw",
@@ -1259,6 +1281,7 @@ def admin_step_create_giftcode(message):
     try:
         parts = message.text.strip().split()
         code, val, usages = parts[0].upper(), int(parts[1]), int(parts[2])
+        refresh_db()
         db.setdefault("giftcodes", {})[code] = {"value": val, "usages": usages, "used_by": []}
         save_db()
         bot.send_message(message.chat.id, f"🎁 <b>TẠO GIFTCODE:</b> <code>{code}</code>\n💰 {val:,}đ | 🔢 {usages} lượt", reply_markup=kb_admin_inline())
@@ -1268,6 +1291,7 @@ def admin_step_create_giftcode(message):
 def admin_step_broadcast(message):
     if str(message.from_user.id) != str(ADMIN_ID): return
     text = message.text.strip()
+    refresh_db()
     users = db.get("users", {})
     success = 0
     for uid in list(users.keys()):
@@ -1281,6 +1305,7 @@ def admin_step_broadcast(message):
 def admin_step_block_user(message):
     if str(message.from_user.id) != str(ADMIN_ID): return
     uid = message.text.strip()
+    refresh_db()
     if uid in db.get("users", {}):
         update_user(uid, is_blocked=True)
         bot.send_message(message.chat.id, f"🔒 Đã KHÓA ID <code>{uid}</code>", reply_markup=kb_admin_inline())
@@ -1290,6 +1315,7 @@ def admin_step_block_user(message):
 def admin_step_unblock_user(message):
     if str(message.from_user.id) != str(ADMIN_ID): return
     uid = message.text.strip()
+    refresh_db()
     if uid in db.get("users", {}):
         update_user(uid, is_blocked=False)
         bot.send_message(message.chat.id, f"🔓 Đã MỞ KHÓA ID <code>{uid}</code>", reply_markup=kb_admin_inline())
@@ -1299,6 +1325,7 @@ def admin_step_unblock_user(message):
 def admin_step_view_user(message):
     if str(message.from_user.id) != str(ADMIN_ID): return
     uid = message.text.strip()
+    refresh_db()
     if uid in db.get("users", {}):
         u = db["users"][uid]
         msg = f"🔍 <b>HỒ SƠ #{uid}</b>\n"
@@ -1314,6 +1341,7 @@ def admin_step_view_user(message):
 # ==========================================
 def process_input_key(message):
     key_code = message.text.strip()
+    refresh_db()
     keys = db.get("keys", {})
     if key_code in keys:
         days = keys[key_code]
@@ -1325,6 +1353,7 @@ def process_input_key(message):
                 if exp > cur: cur = exp
             except: pass
         update_user(message.chat.id, key_expiry=(cur + timedelta(days=days)).isoformat())
+        refresh_db()
         del db["keys"][key_code]
         save_db()
         label = "VĨNH VIỄN" if days >= 9999 else f"{days} ngày"
@@ -1334,12 +1363,14 @@ def process_input_key(message):
 
 def process_input_giftcode(message):
     code = message.text.strip().upper()
+    refresh_db()
     if code in db.get("giftcodes", {}):
         gc = db["giftcodes"][code]
         if str(message.chat.id) in gc.get("used_by", []):
             return bot.send_message(message.chat.id, "❌ Bạn đã dùng mã này!", reply_markup=kb_main_inline(message.chat.id))
         user = get_user(message.chat.id)
         update_user(message.chat.id, balance=user["balance"] + gc["value"])
+        refresh_db()
         gc.setdefault("used_by", []).append(str(message.chat.id))
         gc["usages"] -= 1
         if gc["usages"] <= 0: del db["giftcodes"][code]
@@ -1350,6 +1381,7 @@ def process_input_giftcode(message):
 
 def process_input_feedback(message):
     fb_id = str(random.randint(100000, 999999))
+    refresh_db()
     db.setdefault("pending_feedbacks", {})[fb_id] = {"uid": str(message.chat.id), "content": message.text}
     save_db()
     bot.send_message(message.chat.id, "✅ Cảm ơn đóng góp!", reply_markup=kb_main_inline(message.chat.id))
