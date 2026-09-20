@@ -46,10 +46,23 @@ DATA_COLLECTOR_USER = "acc_clone_soi_cau"
 DATA_COLLECTOR_PASS = "matkhau123"
 
 # ==========================================
-# API BETVIP
+# API BETVIP & RENDER API
 # ==========================================
 BETVIP_API_HU = "https://betvip2x.hacksieucap.pro/huddd"
 BETVIP_API_MD5 = "https://betvip2x.hacksieucap.pro/md5dd"
+
+RENDER_API_URL = "https://cocailon-8a8a.onrender.com/api/data"
+RENDER_GAMES = {
+    "SUNWIN": 1,
+    "LC79-MD5": 2,
+    "MAX789": 3,
+    "HITCLUB": 4,
+    "68GB": 5,
+    "SUMCLUB": 6,
+    "RIKVIP": 7,
+    "SICSUN": 8,
+    "LC79-HU": 9
+}
 
 # ==========================================
 # QR CODE
@@ -273,8 +286,55 @@ def admin_only(func):
     return wrapper
 
 # ==========================================
-# THUẬT TOÁN AI SOI CẦU
+# THUẬT TOÁN AI SOI CẦU & RENDER API FUNCTIONS
 # ==========================================
+def get_render_game_data(api_id):
+    """Gửi request POST tới Render API để lấy dữ liệu Game"""
+    try:
+        headers = {"Content-Type": "application/json"}
+        payload = {"apiId": api_id}
+        res = requests.post(RENDER_API_URL, json=payload, headers=headers, timeout=8)
+        if res.status_code == 200:
+            return res.json()
+    except Exception as e:
+        logger.error(f"Lỗi Render API (ID {api_id}): {e}")
+    return None
+
+def format_render_game_msg(game_name, api_id):
+    """Định dạng tin nhắn trả về cho từng Game thuộc Render API"""
+    data = get_render_game_data(api_id)
+    if not data or "rows" not in data or len(data["rows"]) == 0:
+        return f"❌ <b>Không lấy được dữ liệu Game {game_name}!</b>\nServer API Render hiện không phản hồi."
+
+    rows = data["rows"]
+    latest = rows[0]  # Phiên mới nhất
+
+    msg = f"🎮 <b>DỮ LIỆU GAME: {game_name}</b>\n"
+    msg += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    
+    phien = latest.get("phien", "N/A")
+    time_str = latest.get("time", "N/A")
+    prediction = latest.get("prediction", "N/A")
+    result = latest.get("result", "N/A")
+
+    pred_emoji = "🔵 TÀI" if prediction == "TAI" or prediction == "Tài" else "🔴 XỈU"
+    res_emoji = "🔵 TÀI" if result == "TAI" or result == "Tài" else ("🔴 XỈU" if result == "XIU" or result == "Xỉu" else f"🎲 {result}")
+
+    msg += f"📌 <b>Phiên mới nhất:</b> <code>#{phien}</code>\n"
+    msg += f"🕒 <b>Thời gian:</b> {time_str}\n"
+    msg += f"💎 <b>Dự đoán AI:</b> <b>{pred_emoji}</b>\n"
+    msg += f"🎲 <b>Kết quả phiên:</b> <b>{res_emoji}</b>\n\n"
+
+    msg += f"📜 <b>5 Phiên gần nhất:</b>\n"
+    for r in rows[:5]:
+        r_phien = r.get("phien", "N/A")
+        r_pred = r.get("prediction", "N/A")
+        r_res = r.get("result", "N/A")
+        msg += f"• <code>#{r_phien}</code> | Dự đoán: <b>{r_pred}</b> | Kết quả: <b>{r_res}</b>\n"
+
+    msg += f"\n" + get_footer()
+    return msg
+
 def make_prediction_smart(chat_id):
     with history_lock:
         history = list(GLOBAL_HISTORY)
@@ -319,7 +379,6 @@ def process_deposit_from_webhook(user_id, amount, va=""):
             logger.warning(f"User {user_id} không tồn tại")
             return False
         
-        # Kiểm tra đơn nạp
         pending = db.get("pending_deposits", {}).get(str(user_id))
         if pending:
             expected_amount = pending.get("amount", 0)
@@ -339,17 +398,14 @@ def process_deposit_from_webhook(user_id, amount, va=""):
                 return False
             logger.info(f"✅ User {user_id} chuyển đủ: {amount:,}đ")
         
-        # Cộng tiền
         new_balance = user["balance"] + amount
         update_user(user_id, balance=new_balance)
         
-        # Xóa đơn nạp
         refresh_db()
         if str(user_id) in db.get("pending_deposits", {}):
             del db["pending_deposits"][str(user_id)]
             save_db()
         
-        # Lưu lịch sử
         refresh_db()
         db.setdefault("transaction_history", {}).setdefault(user_id, [])
         db["transaction_history"][user_id].append({
@@ -358,7 +414,6 @@ def process_deposit_from_webhook(user_id, amount, va=""):
         })
         save_db()
         
-        # Gửi thông báo user
         try:
             bot.send_message(user_id,
                 f"🎉 <b>NẠP TIỀN TỰ ĐỘNG THÀNH CÔNG!</b>\n"
@@ -371,7 +426,6 @@ def process_deposit_from_webhook(user_id, amount, va=""):
                 parse_mode="HTML")
         except: pass
         
-        # Gửi thông báo admin
         try:
             bot.send_message(ADMIN_ID,
                 f"✅ <b>TỰ ĐỘNG DUYỆT NẠP TIỀN</b>\n"
@@ -755,6 +809,9 @@ def format_betvip_message(data, game_name):
 def kb_main_inline(user_id):
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
+        InlineKeyboardButton("🎮 Danh Sách Game (Render API)", callback_data="nav_render_games")
+    )
+    markup.add(
         InlineKeyboardButton("🎮 Bàn Tài Xỉu Thường", callback_data="nav_game"),
         InlineKeyboardButton("🎲 Bàn Tài Xỉu MD5", callback_data="nav_game_md5")
     )
@@ -786,8 +843,26 @@ def kb_main_inline(user_id):
         markup.add(InlineKeyboardButton("👑⚙️ Quản Trị Admin", callback_data="nav_admin"))
     return markup
 
+def kb_render_games_inline():
+    """Tạo ô Menu chọn danh sách 9 game Render API"""
+    markup = InlineKeyboardMarkup(row_width=2)
+    buttons = []
+    for g_name, g_id in RENDER_GAMES.items():
+        buttons.append(InlineKeyboardButton(f"🕹 {g_name}", callback_data=f"rdgame_{g_id}"))
+    
+    markup.add(*buttons)
+    markup.add(InlineKeyboardButton("🔄 Lấy tất cả các Game", callback_data="rdgame_all"))
+    markup.add(InlineKeyboardButton("🏠 Quay Lại Menu Chính", callback_data="nav_main"))
+    return markup
+
 def kb_back_inline():
     markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("🏠 Quay Lại Menu Chính", callback_data="nav_main"))
+    return markup
+
+def kb_back_render_games_inline():
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("🎮 Danh Sách Game", callback_data="nav_render_games"))
     markup.add(InlineKeyboardButton("🏠 Quay Lại Menu Chính", callback_data="nav_main"))
     return markup
 
@@ -844,19 +919,19 @@ def render_main_text(user_id, name):
             status_key = f"🟢 Đã kích hoạt (Hạn: {exp})"
 
     msg = f"🤖 <b>THÀNH NHÂN ADM {ADMIN_CONTACT}</b> 🤖\n"
-    msg += f"⚡ <b>SOI CẦU & AUTO BET TÀI XỈU</b> ⚡\n"
+    msg += f"⚡ <b>SOI CẦU & AUTO BET TÀI XỈU MULTI GAME</b> ⚡\n"
     msg += f"═══════════════════\n\n"
     msg += f"👋 Xin chào, <b>{name}</b>!\n"
     msg += f"🆔 ID: <code>{user_id}</code>\n"
     msg += f"💳 Số dư ví: <b>{u_info['balance']:,}đ</b>\n"
     msg += f"🔴 KEY VIP: {status_key}\n"
     msg += f"👥 Tổng người dùng: <b>{len(db['users'])} người</b>\n\n"
-    msg += f"🎰 <b>GAME MỚI: BETVIP HŨ + MD5</b>\n"
-    msg += f"🤖 <b>CÁC LỆNH LÊN TOOL:</b>\n"
+    msg += f"🎰 <b>HỖ TRỢ 9 GAME RENDER API + BETVIP + PORTAL:</b>\n"
+    msg += f"👉 <code>/render_api</code> - Danh sách 9 Game Render API\n"
+    msg += f"👉 <code>/sunwin</code> | <code>/hitclub</code> | <code>/rikvip</code>...\n"
     msg += f"👉 <code>/logintx tk mk</code> | <code>/loginmd5 tk mk</code>\n"
     msg += f"👉 <code>/autobettx on 10000</code> | <code>/autobetmd5 on 10000</code>\n"
-    msg += f"👉 <code>/betvip</code> - Dự đoán BetVip\n"
-    msg += f"👉 <code>/hu</code> | <code>/md5</code> - Dự đoán nhanh\n"
+    msg += f"👉 <code>/betvip</code> | <code>/hu</code> | <code>/md5</code>\n"
     msg += f"👉 <code>/stop</code> | <code>/help</code>\n\n"
     msg += f"👇 <b>Chọn chức năng bên dưới:</b>\n"
     msg += get_footer()
@@ -1042,13 +1117,16 @@ def send_help(message):
     help_text = (
         "🤖 <b>HƯỚNG DẪN SỬ DỤNG</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🎮 <b>HỆ THỐNG 9 GAME (RENDER API):</b>\n"
+        "🔹 <code>/render_api</code> - Danh sách 9 game mở rộng\n"
+        "🔹 <code>/sunwin</code> | <code>/hitclub</code> | <code>/rikvip</code> | <code>/max789</code>...\n\n"
         "🎮 <b>TÀI XỈU THƯỜNG:</b>\n"
         "🔹 <code>/logintx tk mk</code> - Đăng nhập\n"
         "🔹 <code>/autobettx on [số_tiền]</code> - Bật Auto Bet\n\n"
         "🎲 <b>TÀI XỈU MD5:</b>\n"
         "🔹 <code>/loginmd5 tk mk</code> - Đăng nhập\n"
         "🔹 <code>/autobetmd5 on [số_tiền]</code> - Bật Auto Bet\n\n"
-        "🎰 <b>BETVIP (MỚI):</b>\n"
+        "🎰 <b>BETVIP:</b>\n"
         "🔹 <code>/betvip</code> - Dự đoán cả Hũ + MD5\n"
         "🔹 <code>/hu</code> - Chỉ dự đoán Hũ\n"
         "🔹 <code>/md5</code> - Chỉ dự đoán MD5\n\n"
@@ -1071,6 +1149,41 @@ def send_welcome(message):
     init_user_state_md5(message.chat.id)
     bot.send_message(message.chat.id, render_main_text(message.from_user.id, message.from_user.first_name),
                     reply_markup=kb_main_inline(message.from_user.id))
+
+# ==========================================
+# RENDER API & GAME COMMANDS
+# ==========================================
+@bot.message_handler(commands=['render_api', 'games'])
+@require_joined
+@require_vip
+def handle_render_games_cmd(message):
+    msg = "🎮 <b>DANH SÁCH GAME HỖ TRỢ (RENDER API)</b>\nVui lòng chọn game bạn muốn lấy dữ liệu:"
+    bot.send_message(message.chat.id, msg, reply_markup=kb_render_games_inline())
+
+@bot.message_handler(commands=['sunwin', 'lc79md5', 'max789', 'hitclub', 'gb68', 'sumclub', 'rikvip', 'sicsun', 'lc79hu'])
+@require_joined
+@require_vip
+def handle_direct_game_cmd(message):
+    cmd = message.text.split()[0].replace("/", "").lower()
+    mapping = {
+        "sunwin": ("SUNWIN", 1),
+        "lc79md5": ("LC79-MD5", 2),
+        "max789": ("MAX789", 3),
+        "hitclub": ("HITCLUB", 4),
+        "gb68": ("68GB", 5),
+        "sumclub": ("SUMCLUB", 6),
+        "rikvip": ("RIKVIP", 7),
+        "sicsun": ("SICSUN", 8),
+        "lc79hu": ("LC79-HU", 9)
+    }
+    if cmd in mapping:
+        g_name, g_id = mapping[cmd]
+        msg_proc = bot.reply_to(message, f"🔄 <b>Đang tải dữ liệu {g_name}...</b>", parse_mode="HTML")
+        result_msg = format_render_game_msg(g_name, g_id)
+        try:
+            bot.edit_message_text(result_msg, chat_id=message.chat.id, message_id=msg_proc.message_id, parse_mode="HTML")
+        except:
+            bot.send_message(message.chat.id, result_msg, parse_mode="HTML")
 
 # ==========================================
 # BETVIP COMMANDS
@@ -1117,6 +1230,41 @@ def handle_callbacks(call):
     bot.answer_callback_query(call.id)
     chat_id = call.message.chat.id
     user_id = call.from_user.id
+
+    # RENDER GAMES CALLBACKS
+    if call.data == "nav_render_games":
+        if not is_vip(user_id):
+            return bot.send_message(chat_id, "⛔ <b>BẠN CHƯA KÍCH HOẠT VIP!</b> Vui lòng mua Key để sử dụng.", parse_mode="HTML")
+        msg = "🎮 <b>DANH SÁCH GAME HỖ TRỢ (RENDER API)</b>\nBấm chọn từng game bên dưới để lấy kết quả và dự đoán mới nhất:"
+        bot.edit_message_text(msg, chat_id=chat_id, message_id=call.message.message_id, reply_markup=kb_render_games_inline())
+        return
+
+    if call.data.startswith("rdgame_"):
+        if not is_vip(user_id):
+            return bot.send_message(chat_id, "⛔ <b>BẠN CHƯA KÍCH HOẠT VIP!</b>", parse_mode="HTML")
+        
+        target = call.data.split("_")[1]
+        
+        if target == "all":
+            bot.edit_message_text("🔄 <b>Đang tải dữ liệu tất cả các game...</b>", chat_id=chat_id, message_id=call.message.message_id, parse_mode="HTML")
+            all_msg = "📊 <b>TỔNG HỢP 9 GAME RENDER API</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            for g_name, g_id in RENDER_GAMES.items():
+                data = get_render_game_data(g_id)
+                if data and "rows" in data and len(data["rows"]) > 0:
+                    l = data["rows"][0]
+                    all_msg += f"🕹 <b>{g_name}</b> (Phiên #{l.get('phien')}):\n• Dự đoán: <b>{l.get('prediction')}</b> | Kết quả: <b>{l.get('result')}</b>\n"
+                else:
+                    all_msg += f"🕹 <b>{g_name}</b>: Lỗi kết nối API\n"
+                all_msg += "-----------------------------------\n"
+            all_msg += "\n" + get_footer()
+            bot.edit_message_text(all_msg, chat_id=chat_id, message_id=call.message.message_id, reply_markup=kb_back_render_games_inline())
+        else:
+            g_id = int(target)
+            g_name = [k for k, v in RENDER_GAMES.items() if v == g_id][0]
+            bot.edit_message_text(f"🔄 <b>Đang lấy dữ liệu Game {g_name}...</b>", chat_id=chat_id, message_id=call.message.message_id, parse_mode="HTML")
+            result_msg = format_render_game_msg(g_name, g_id)
+            bot.edit_message_text(result_msg, chat_id=chat_id, message_id=call.message.message_id, reply_markup=kb_back_render_games_inline())
+        return
 
     # ADMIN
     if call.data.startswith('adm_'):
@@ -1480,8 +1628,8 @@ if __name__ == '__main__':
     print("==================================================")
     print("🤖 THÀNH NHÂN ADM @nhan161019 BOT IS ONLINE!")
     print("🎯 BÀN TÀI XỈU THƯỜNG + MD5")
-    print("🎰 BETVIP HŨ + MD5 (NEW!)")
-    print("💳 TỰ ĐỘNG NẠP TIỀN QUA WEBHOOK THUEAPI")
+    print("🎰 BETVIP HŨ + MD5")
+    print("🕹 9 GAME RENDER API (SUNWIN, HITCLUB, RIKVIP...)")
     print("==================================================")
     try:
         bot.remove_webhook()
@@ -1490,13 +1638,15 @@ if __name__ == '__main__':
         print(f"⚠️ Không xóa được webhook: {e}")
     try:
         bot.set_my_commands([
-            BotCommand("start", "Bắt Đầu"),
-            BotCommand("help", "Hướng Dẫn"),
-            BotCommand("logintx", "ĐĂNG NHẬP BÀN THƯỜNG"),
-            BotCommand("loginmd5", "ĐĂNG NHẬP BÀN MD5"),
-            BotCommand("betvip", "DỰ ĐOÁN BETVIP"),
-            BotCommand("hu", "DỰ ĐOÁN HŨ"),
-            BotCommand("md5", "DỰ ĐOÁN MD5")
+            BotCommand("start", "Bắt Đầu / Menu"),
+            BotCommand("render_api", "Danh Sách 9 Game"),
+            BotCommand("sunwin", "Soi Cầu Sunwin"),
+            BotCommand("hitclub", "Soi Cầu Hitclub"),
+            BotCommand("rikvip", "Soi Cầu Rikvip"),
+            BotCommand("logintx", "Đăng Nhập Bàn Thường"),
+            BotCommand("loginmd5", "Đăng Nhập Bàn MD5"),
+            BotCommand("betvip", "Dự Đoán BetVip"),
+            BotCommand("help", "Hướng Dẫn")
         ])
     except: pass
     threading.Thread(target=background_data_collector, daemon=True).start()
