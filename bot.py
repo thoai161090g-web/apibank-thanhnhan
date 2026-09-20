@@ -19,7 +19,7 @@ import urllib3
 urllib3.disable_warnings()
 
 # ==========================================
-# CẤU HÌNH
+# CẤU HÌNH HỆ THỐNG & BOT
 # ==========================================
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ ADMIN_ID = 8375848425
 ADMIN_CONTACT = '@nhan161019'
 
 # ==========================================
-# KÊNH/NHÓM YÊU CẦU THAM GIA (BẮT BUỘC)
+# KÊNH / NHÓM BẮT BUỘC JOIN
 # ==========================================
 REQUIRED_CHANNELS = [
     {"name": "📢 Kênh Thông Tin", "url": "https://t.me/thongbaotoolgamevip"},
@@ -65,7 +65,7 @@ RENDER_GAMES = {
 }
 
 # ==========================================
-# QR CODE
+# THÔNG TIN NGÂN HÀNG & QR CODE
 # ==========================================
 BANK_BIN = 'BIDV'
 BANK_ACC = '963869NHANYEU'
@@ -73,37 +73,47 @@ BANK_NAME = 'NGUYEN THANH NHAN'
 QR_CODE_URL = 'https://vietqr.app/img?bank=BIDV&acc=963869NHANYEU&template=compact&showinfo=true&holder=NGUYEN%20THANH%20NHAN'
 
 # ==========================================
-# BOT INIT
+# BOT INIT & DATABASE CONFIG
 # ==========================================
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode='HTML')
 DB_FILE = 'database.json'
 
-# ==========================================
-# BẢNG GIÁ KEY VIP
-# ==========================================
 KEY_PRICES = {
-    1: 40000,      # 1 Ngày - 40k
-    3: 90000,      # 3 Ngày - 90k
-    7: 130000,     # 1 Tuần - 130k
-    30: 170000,    # 1 Tháng - 170k
-    365: 250000,   # 1 Năm - 250k
-    9999: 300000   # Vĩnh Viễn - 300k
+    1: 40000,      # 1 Ngày
+    3: 90000,      # 3 Ngày
+    7: 130000,     # 1 Tuần
+    30: 170000,    # 1 Tháng
+    365: 250000,   # 1 Năm
+    9999: 300000   # Vĩnh Viễn
 }
 
 # ==========================================
-# DATABASE
+# BẢNG ĐIỀU KHIỂN CƠ SỞ DỮ LIỆU JSON
 # ==========================================
 def load_db():
-    default = {"users": {}, "keys": {}, "giftcodes": {}, "pending_deposits": {}, 
-               "pending_feedbacks": {}, "history_md5": [], "is_reversed_mode": False,
-               "joined_users": [], "processed_trans": [], "transaction_history": {}}
-    if not os.path.exists(DB_FILE): return default
+    default = {
+        "users": {}, 
+        "keys": {}, 
+        "giftcodes": {}, 
+        "pending_deposits": {}, 
+        "pending_feedbacks": {}, 
+        "history_md5": [], 
+        "is_reversed_mode": False,
+        "joined_users": [], 
+        "processed_trans": [], 
+        "transaction_history": {}
+    }
+    if not os.path.exists(DB_FILE): 
+        return default
     try:
         with open(DB_FILE, 'r', encoding='utf-8') as f:
             data = json.load(f)
-            for k in default: data.setdefault(k, default[k])
+            for k in default: 
+                data.setdefault(k, default[k])
             return data
-    except: return default
+    except Exception as e:
+        logger.error(f"Lỗi load DB: {e}")
+        return default
 
 def save_db(): 
     with open(DB_FILE, 'w', encoding='utf-8') as f: 
@@ -116,7 +126,7 @@ def refresh_db():
 db = load_db()
 
 # ==========================================
-# CHECK USER JOINED
+# KIỂM TRA THAM GIA KÊNH/NHÓM
 # ==========================================
 def check_user_joined(user_id):
     if str(user_id) == str(ADMIN_ID):
@@ -148,7 +158,7 @@ def kb_verify_join():
     return markup
 
 # ==========================================
-# GLOBAL VARIABLES
+# BIẾN TOÀN CỤC THỜI GIAN THỰC
 # ==========================================
 active_sockets = {}
 active_sockets_md5 = {}
@@ -159,22 +169,27 @@ processed_message_ids = set()
 AUTO_VIP_ENABLED = False
 GLOBAL_HISTORY = []
 MAX_GLOBAL_HISTORY = 2000
-GLOBAL_STATS = {"total_win": 0, "total_lose": 0, "total_draw": 0, "total_profit": 0,
-                "current_streak_win": 0, "max_streak_win": 0,
-                "current_streak_lose": 0, "max_streak_lose": 0}
+GLOBAL_STATS = {
+    "total_win": 0, "total_lose": 0, "total_draw": 0, "total_profit": 0,
+    "current_streak_win": 0, "max_streak_win": 0,
+    "current_streak_lose": 0, "max_streak_lose": 0
+}
 SPAM_TRACKER = {}
-SPAM_THRESHOLD = 1.2
-MAX_WARNINGS = 2
 
 # ==========================================
-# USER MANAGEMENT
+# QUẢN LÝ NGƯỜI DÙNG & BẢO BỆ SPAM
 # ==========================================
 def get_user(user_id):
     refresh_db()
     user_id = str(user_id)
     if user_id not in db["users"]:
-        db["users"][user_id] = {"username": "", "balance": 0, "key_expiry": None, 
-                                "is_blocked": False, "can_create_giftcode": True}
+        db["users"][user_id] = {
+            "username": "", 
+            "balance": 0, 
+            "key_expiry": None, 
+            "is_blocked": False, 
+            "can_create_giftcode": True
+        }
         save_db()
     return db["users"][user_id]
 
@@ -252,19 +267,23 @@ def check_and_block(call_or_msg):
 
 def init_user_state(chat_id):
     if chat_id not in user_states:
-        user_states[chat_id] = {"profit_loss": 0, "auto_bet_enabled": False, "x2_mode": False,
-                                "win_streak": 0, "base_bet_amount": 10000, "current_bet": 10000,
-                                "target_profit": None, "current_prediction": None,
-                                "waiting_for_result": False, "has_bet_this_session": False,
-                                "session_id": None, "balance": 0, "history_15": []}
+        user_states[chat_id] = {
+            "profit_loss": 0, "auto_bet_enabled": False, "x2_mode": False,
+            "win_streak": 0, "base_bet_amount": 10000, "current_bet": 10000,
+            "target_profit": None, "current_prediction": None,
+            "waiting_for_result": False, "has_bet_this_session": False,
+            "session_id": None, "balance": 0, "history_15": []
+        }
 
 def init_user_state_md5(chat_id):
     if chat_id not in user_states_md5:
-        user_states_md5[chat_id] = {"profit_loss": 0, "auto_bet_enabled": False, "x2_mode": False,
-                                    "win_streak": 0, "base_bet_amount": 10000, "current_bet": 10000,
-                                    "target_profit": None, "current_prediction": None,
-                                    "waiting_for_result": False, "has_bet_this_session": False,
-                                    "session_id": None, "balance": 0, "history_15": []}
+        user_states_md5[chat_id] = {
+            "profit_loss": 0, "auto_bet_enabled": False, "x2_mode": False,
+            "win_streak": 0, "base_bet_amount": 10000, "current_bet": 10000,
+            "target_profit": None, "current_prediction": None,
+            "waiting_for_result": False, "has_bet_this_session": False,
+            "session_id": None, "balance": 0, "history_15": []
+        }
 
 # ==========================================
 # DECORATORS
@@ -286,10 +305,9 @@ def admin_only(func):
     return wrapper
 
 # ==========================================
-# THUẬT TOÁN AI SOI CẦU & RENDER API FUNCTIONS
+# THUẬT TOÁN AI SOI CẦU & RENDER API
 # ==========================================
 def get_render_game_data(api_id):
-    """Gửi request POST tới Render API để lấy dữ liệu Game"""
     try:
         headers = {"Content-Type": "application/json"}
         payload = {"apiId": api_id}
@@ -301,13 +319,12 @@ def get_render_game_data(api_id):
     return None
 
 def format_render_game_msg(game_name, api_id):
-    """Định dạng tin nhắn trả về cho từng Game thuộc Render API"""
     data = get_render_game_data(api_id)
     if not data or "rows" not in data or len(data["rows"]) == 0:
         return f"❌ <b>Không lấy được dữ liệu Game {game_name}!</b>\nServer API Render hiện không phản hồi."
 
     rows = data["rows"]
-    latest = rows[0]  # Phiên mới nhất
+    latest = rows[0]
 
     msg = f"🎮 <b>DỮ LIỆU GAME: {game_name}</b>\n"
     msg += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -317,8 +334,8 @@ def format_render_game_msg(game_name, api_id):
     prediction = latest.get("prediction", "N/A")
     result = latest.get("result", "N/A")
 
-    pred_emoji = "🔵 TÀI" if prediction == "TAI" or prediction == "Tài" else "🔴 XỈU"
-    res_emoji = "🔵 TÀI" if result == "TAI" or result == "Tài" else ("🔴 XỈU" if result == "XIU" or result == "Xỉu" else f"🎲 {result}")
+    pred_emoji = "🔵 TÀI" if prediction in ["TAI", "Tài"] else "🔴 XỈU"
+    res_emoji = "🔵 TÀI" if result in ["TAI", "Tài"] else ("🔴 XỈU" if result in ["XIU", "Xỉu"] else f"🎲 {result}")
 
     msg += f"📌 <b>Phiên mới nhất:</b> <code>#{phien}</code>\n"
     msg += f"🕒 <b>Thời gian:</b> {time_str}\n"
@@ -369,7 +386,7 @@ def analyze_ai_deep(hash_str):
     return {"result": base_result, "tai_percent": tai_percent, "xiu_percent": xiu_percent, "is_reversed": is_reversed}
 
 # ==========================================
-# XỬ LÝ NẠP TIỀN TỪ WEBHOOK
+# XỬ LÝ NẠP TIỀN TỰ ĐỘNG WEBHOOK
 # ==========================================
 def process_deposit_from_webhook(user_id, amount, va=""):
     try:
@@ -407,8 +424,8 @@ def process_deposit_from_webhook(user_id, amount, va=""):
             save_db()
         
         refresh_db()
-        db.setdefault("transaction_history", {}).setdefault(user_id, [])
-        db["transaction_history"][user_id].append({
+        db.setdefault("transaction_history", {}).setdefault(str(user_id), [])
+        db["transaction_history"][str(user_id)].append({
             "type": "deposit", "amount": amount, "balance": new_balance,
             "trans_id": f"VA-{va}", "time": datetime.now().isoformat()
         })
@@ -441,7 +458,7 @@ def process_deposit_from_webhook(user_id, amount, va=""):
         return False
 
 # ==========================================
-# GAME FUNCTIONS
+# ĐĂNG NHẬP GAME PORTAL & TOKEN
 # ==========================================
 def md5_hash(text): 
     return hashlib.md5(text.encode()).hexdigest()
@@ -472,7 +489,7 @@ def login_and_get_token(username, password):
         return {"_error": f"Lỗi kết nối: {e}"}
 
 # ==========================================
-# WEBSOCKET FUNCTIONS
+# WEBSOCKET GAME CLIENTS
 # ==========================================
 def start_websocket(chat_id, token, is_background=False):
     if chat_id in active_sockets and not is_background:
@@ -744,7 +761,7 @@ def background_data_collector():
         time.sleep(30)
 
 # ==========================================
-# BETVIP FUNCTIONS
+# BETVIP INTEGRATION
 # ==========================================
 def get_betvip_prediction(api_url):
     try:
@@ -798,13 +815,12 @@ def format_betvip_message(data, game_name):
         msg += f"📊 <b>Cầu gần đây:</b>\n<code>{pattern[-40:]}</code>\n\n"
     if giai_thich:
         msg += f"💡 <i>{giai_thich}</i>\n\n"
-    msg += f"⏱ {datetime.now().strftime('%H:%M:%S %d/%m/%Y')}\n"
     msg += get_footer()
     
     return msg
 
 # ==========================================
-# INLINE KEYBOARDS
+# INLINE KEYBOARDS BUILDER
 # ==========================================
 def kb_main_inline(user_id):
     markup = InlineKeyboardMarkup(row_width=2)
@@ -844,7 +860,6 @@ def kb_main_inline(user_id):
     return markup
 
 def kb_render_games_inline():
-    """Tạo ô Menu chọn danh sách 9 game Render API"""
     markup = InlineKeyboardMarkup(row_width=2)
     buttons = []
     for g_name, g_id in RENDER_GAMES.items():
@@ -938,7 +953,7 @@ def render_main_text(user_id, name):
     return msg
 
 # ==========================================
-# BOT HANDLERS
+# COMMAND HANDLERS
 # ==========================================
 
 @bot.callback_query_handler(func=lambda call: call.data == "verify_join")
@@ -1219,7 +1234,7 @@ def handle_md5_betvip(message):
     bot.reply_to(message, msg, parse_mode="HTML")
 
 # ==========================================
-# CALLBACK HANDLERS
+# CALLBACK QUERIES DISPATCHER
 # ==========================================
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callbacks(call):
@@ -1266,7 +1281,7 @@ def handle_callbacks(call):
             bot.edit_message_text(result_msg, chat_id=chat_id, message_id=call.message.message_id, reply_markup=kb_back_render_games_inline())
         return
 
-    # ADMIN
+    # ADMIN CALLBACKS
     if call.data.startswith('adm_'):
         if str(user_id) != str(ADMIN_ID):
             return bot.answer_callback_query(call.id, "❌ Không có quyền!", show_alert=True)
@@ -1300,7 +1315,7 @@ def handle_callbacks(call):
             bot.register_next_step_handler(sent, admin_step_view_user)
         return
 
-    # NAVIGATION
+    # NAVIGATION CALLBACKS
     if call.data == "nav_main":
         bot.edit_message_text(render_main_text(user_id, call.from_user.first_name), chat_id=chat_id,
                             message_id=call.message.message_id, reply_markup=kb_main_inline(user_id))
@@ -1354,7 +1369,7 @@ def handle_callbacks(call):
             f"📍 <b>Số TK:</b> <code>{BANK_ACC}</code>\n"
             f"👤 <b>Chủ TK:</b> {BANK_NAME}\n\n"
             "📌 Bot sẽ tự động kiểm tra và duyệt nạp tiền!\n"
-            "💡 Nội dung: <code>NAP [ID]</code>\n\n"
+            "💡 Nội dung: <code>NAP {user_id}</code>\n\n"
             "👇 Chọn hạn mức nạp bên dưới:",
             chat_id=chat_id, message_id=call.message.message_id, reply_markup=kb_deposit_inline())
     elif call.data == "dep_amt_custom":
@@ -1458,7 +1473,7 @@ def process_custom_deposit(message):
         bot.send_message(message.chat.id, "❌ Vui lòng nhập số tiền hợp lệ!", parse_mode="HTML")
 
 # ==========================================
-# ADMIN STEP FUNCTIONS
+# ADMIN STEP HANDLERS
 # ==========================================
 def admin_step_key(message):
     if str(message.from_user.id) != str(ADMIN_ID): return
@@ -1471,7 +1486,7 @@ def admin_step_key(message):
         label = "Vĩnh Viễn" if days >= 9999 else f"{days} ngày"
         bot.send_message(message.chat.id, f"✅ <b>TẠO KEY:</b> <code>{key_code}</code>\n⏳ {label}", reply_markup=kb_admin_inline())
     except:
-        bot.send_message(message.chat.id, "❌ Nhập số ngày!", reply_markup=kb_admin_inline())
+        bot.send_message(message.chat.id, "❌ Nhập số ngày hợp lệ!", reply_markup=kb_admin_inline())
 
 def admin_step_bal(message):
     if str(message.from_user.id) != str(ADMIN_ID): return
@@ -1603,7 +1618,7 @@ def process_input_feedback(message):
     bot.send_message(message.chat.id, "✅ Cảm ơn đóng góp!", reply_markup=kb_main_inline(message.chat.id))
 
 # ==========================================
-# MD5 HANDLER (SOI CẦU MD5)
+# SOI CẦU MD5 TỰ ĐỘNG KHUÔN MẪU
 # ==========================================
 @bot.message_handler(func=lambda msg: len(msg.text.strip()) == 32 and all(c in string.hexdigits for c in msg.text.strip()))
 def handle_md5_code(message):
@@ -1622,7 +1637,7 @@ def handle_md5_code(message):
     bot.reply_to(message, out, parse_mode="HTML")
 
 # ==========================================
-# KHỞI CHẠY
+# KHỞI CHẠY BOT TRỰC TUYẾN
 # ==========================================
 if __name__ == '__main__':
     print("==================================================")
