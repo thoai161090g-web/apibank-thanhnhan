@@ -73,7 +73,7 @@ BANK_NAME = 'NGUYEN THANH NHAN'
 QR_CODE_URL = 'https://vietqr.app/img?bank=BIDV&acc=963869NHANYEU&template=compact&showinfo=true&holder=NGUYEN%20THANH%20NHAN'
 
 # ==========================================
-# KHOỎI TẠO BOT & DATABASE
+# KHỞI TẠO BOT & DATABASE
 # ==========================================
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode='HTML')
 DB_FILE = 'database.json'
